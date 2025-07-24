@@ -1,0 +1,26 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install dependencies for development
+RUN apk add --no-cache git
+
+# Create non-root user
+RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Copy package files
+COPY --chown=appuser:appuser frontend/package*.json ./
+
+# Install dependencies
+RUN if [ -f "package-lock.json" ]; then \
+        npm ci; \
+    else \
+        npm install; \
+    fi
+
+# Expose development server port
+EXPOSE 3000
+
+# Start development server
+CMD ["npm", "run", "dev"]

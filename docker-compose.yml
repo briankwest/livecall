@@ -1,0 +1,109 @@
+services:
+  # PostgreSQL Database with pgvector
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: livecall-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-livecall}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - livecall-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: livecall-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - livecall-network
+
+  # Python Backend
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: livecall-backend
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-livecall}
+      REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      SIGNALWIRE_PROJECT_ID: ${SIGNALWIRE_PROJECT_ID}
+      SIGNALWIRE_TOKEN: ${SIGNALWIRE_TOKEN}
+      SIGNALWIRE_SPACE_URL: ${SIGNALWIRE_SPACE_URL}
+      SIGNALWIRE_FROM_NUMBER: ${SIGNALWIRE_FROM_NUMBER}
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-here}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3030}
+    volumes:
+      - ./backend:/app
+      - ./logs/backend:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - livecall-network
+
+  # React Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_WS_URL: ${VITE_WS_URL:-}
+    container_name: livecall-frontend
+    networks:
+      - livecall-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: livecall-nginx
+    ports:
+      - "3030:80"
+      - "3443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - livecall-network
+
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  livecall-network:
+    driver: bridge

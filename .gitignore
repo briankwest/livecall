@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# React build
+frontend/build/
+frontend/dist/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# Docker volumes
+postgres_data/
+redis_data/
+
+# Certificates
+*.pem
+*.key
+*.crt
+
+# WebPhone example directory (if it's just for reference)
+webphone/
+
+# Alembic migration files (temporary)
+backend/alembic/versions/__pycache__/
+
+# Frontend lock files (can be regenerated)
+frontend/package-lock.json
+frontend/yarn.lock
+
+# Coverage reports
+coverage/
+.coverage
+htmlcov/
+
+# pytest cache
+.pytest_cache/
