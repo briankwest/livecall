@@ -1,5 +1,18 @@
-import React, { useEffect, useRef } from 'react';
-import { Box, Paper, Typography, Chip, LinearProgress } from '@mui/material';
+import React, { useEffect, useRef, useState } from 'react';
+import { 
+  Box, 
+  Paper, 
+  Typography, 
+  Chip, 
+  LinearProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  IconButton
+} from '@mui/material';
+import { Close as CloseIcon } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { Transcription } from '../../types';
 
@@ -13,6 +26,8 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
   isLive,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [selectedTranscription, setSelectedTranscription] = useState<Transcription | null>(null);
+  const [openModal, setOpenModal] = useState(false);
 
   // Auto-scroll to bottom when new transcriptions arrive
   useEffect(() => {
@@ -21,16 +36,27 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     }
   }, [transcriptions, isLive]);
 
+  const handleTranscriptionClick = (transcription: Transcription) => {
+    setSelectedTranscription(transcription);
+    setOpenModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setOpenModal(false);
+    setSelectedTranscription(null);
+  };
+
   return (
-    <Paper
-      elevation={2}
-      sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-      }}
-    >
+    <>
+      <Paper
+        elevation={2}
+        sx={{
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
       <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
         <Typography variant="h6">Transcription</Typography>
         {isLive && <LinearProgress sx={{ mt: 1 }} />}
@@ -66,8 +92,31 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
                 color={transcription.speaker === 'agent' ? 'primary' : 'secondary'}
                 sx={{ minWidth: 80 }}
               />
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="body1">{transcription.text}</Typography>
+              <Box 
+                sx={{ 
+                  flex: 1,
+                  cursor: 'pointer',
+                  '&:hover': {
+                    backgroundColor: 'action.hover',
+                    borderRadius: 1,
+                    padding: 1,
+                    margin: -1,
+                  }
+                }}
+                onClick={() => handleTranscriptionClick(transcription)}
+              >
+                <Typography 
+                  variant="body1"
+                  sx={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                  }}
+                >
+                  {transcription.text}
+                </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {format(new Date(transcription.timestamp), 'HH:mm:ss')}
                   {transcription.confidence && (
@@ -81,5 +130,57 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
         <div ref={bottomRef} />
       </Box>
     </Paper>
+
+    {/* Transcription Detail Modal */}
+    <Dialog
+      open={openModal}
+      onClose={handleCloseModal}
+      maxWidth="md"
+      fullWidth
+    >
+      <DialogTitle>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Typography variant="h6">Transcription Details</Typography>
+            {selectedTranscription && (
+              <Chip
+                label={selectedTranscription.speaker}
+                size="small"
+                color={selectedTranscription.speaker === 'agent' ? 'primary' : 'secondary'}
+              />
+            )}
+          </Box>
+          <IconButton onClick={handleCloseModal} size="small">
+            <CloseIcon />
+          </IconButton>
+        </Box>
+      </DialogTitle>
+      <DialogContent dividers>
+        {selectedTranscription && (
+          <Box>
+            <Typography variant="body1" paragraph>
+              {selectedTranscription.text}
+            </Typography>
+            <Box sx={{ mt: 3, display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                <strong>Time:</strong> {format(new Date(selectedTranscription.timestamp), 'PPpp')}
+              </Typography>
+              {selectedTranscription.confidence && (
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Confidence:</strong> {Math.round(selectedTranscription.confidence * 100)}%
+                </Typography>
+              )}
+              <Typography variant="body2" color="text.secondary">
+                <strong>Speaker:</strong> {selectedTranscription.speaker === 'agent' ? 'Agent' : 'Customer'}
+              </Typography>
+            </Box>
+          </Box>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={handleCloseModal}>Close</Button>
+      </DialogActions>
+    </Dialog>
+    </>
   );
 };

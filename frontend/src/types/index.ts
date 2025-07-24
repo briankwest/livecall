@@ -17,6 +17,7 @@ export interface Call {
   duration_seconds?: number;
   status: 'active' | 'ended' | 'failed';
   listening_mode: 'agent' | 'customer' | 'both';
+  direction: 'inbound' | 'outbound';
   transcription_count?: number;
   documents_accessed?: number;
 }

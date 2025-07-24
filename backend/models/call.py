@@ -31,6 +31,7 @@ class Call(Base):
     duration_seconds = Column(Integer)
     status = Column(String(50), default="active", index=True)
     listening_mode = Column(String(20), default="both")
+    direction = Column(String(20), default="outbound")  # inbound or outbound
     raw_data = Column(JSONB, default={})  # Store raw webhook data
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

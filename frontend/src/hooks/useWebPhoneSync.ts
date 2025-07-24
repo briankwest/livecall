@@ -12,34 +12,22 @@ export const useWebPhoneSync = () => {
 
   const syncCallWithBackend = useCallback(async (callState: CallState) => {
     try {
+      // Don't create call records here - let the call-state webhook handle it
+      // This prevents duplicate call records
+      
       if (callState.direction === 'outbound' && callState.state === 'trying') {
-        // Create call record in backend when outbound call starts
-        const response = await callsService.initiateCall({
-          to_number: callState.phoneNumber,
-          agent_name: 'WebPhone User', // TODO: Get from auth context
-          listening_mode: 'both',
-          webrtc_call_id: callState.id,
-        });
-
-        // Navigate to live call tab
+        // Just navigate to live call tab
         navigate('/?tab=1');
+        enqueueSnackbar('Placing call...', { variant: 'info' });
       } else if (callState.direction === 'inbound' && callState.state === 'answered') {
-        // For inbound calls, create record when answered
-        const response = await callsService.initiateCall({
-          to_number: 'Inbound',
-          from_number: callState.phoneNumber,
-          agent_name: 'WebPhone User',
-          listening_mode: 'both',
-          webrtc_call_id: callState.id,
-          direction: 'inbound',
-        });
-
-        // Navigate to live call tab
+        // Just navigate to live call tab
         navigate('/?tab=1');
       }
 
-      // Refresh active calls list
-      queryClient.invalidateQueries({ queryKey: ['calls', 'active'] });
+      // Refresh active calls list after a short delay to allow webhook to create the call
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['calls', 'active'] });
+      }, 1000);
     } catch (error) {
       console.error('Failed to sync call with backend:', error);
       enqueueSnackbar('Failed to sync call with system', { variant: 'error' });
@@ -48,22 +36,18 @@ export const useWebPhoneSync = () => {
 
   const handleCallEnded = useCallback(async (data: any) => {
     try {
-      // Find the call by WebRTC ID and end it
-      const calls = await callsService.listCalls({ 
-        webrtc_call_id: data.id,
-        status: 'active' 
-      });
-
-      if (calls.length > 0) {
-        await callsService.endCall(calls[0].id);
-      }
-
+      // The call-state webhook will handle marking the call as ended
+      // We just need to refresh the UI
+      
       // Refresh calls list
       queryClient.invalidateQueries({ queryKey: ['calls'] });
+      queryClient.invalidateQueries({ queryKey: ['calls', 'active'] });
+      
+      enqueueSnackbar('Call ended', { variant: 'info' });
     } catch (error) {
-      console.error('Failed to end call in backend:', error);
+      console.error('Failed to update UI after call ended:', error);
     }
-  }, [queryClient]);
+  }, [queryClient, enqueueSnackbar]);
 
   useEffect(() => {
     // Set up event listeners

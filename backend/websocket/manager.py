@@ -50,11 +50,14 @@ class ConnectionManager:
             
     async def broadcast_to_call(self, call_id: str, message: Dict[str, Any]):
         """Broadcast message to all connections for a specific call"""
+        logger.info(f"Broadcasting to call {call_id}: {message.get('event', 'unknown event')}")
         if call_id in self.active_connections:
+            logger.info(f"Found {len(self.active_connections[call_id])} connections for call {call_id}")
             disconnected = []
             for connection in self.active_connections[call_id]:
                 try:
                     await connection.send_json(message)
+                    logger.info(f"Message sent to connection for call {call_id}")
                 except Exception as e:
                     logger.error(f"Error broadcasting to connection: {e}")
                     disconnected.append(connection)
@@ -62,6 +65,8 @@ class ConnectionManager:
             # Clean up disconnected connections
             for connection in disconnected:
                 self.disconnect(connection)
+        else:
+            logger.warning(f"No active connections found for call {call_id}")
                 
     async def broadcast_to_all(self, message: Dict[str, Any]):
         """Broadcast message to all active connections"""

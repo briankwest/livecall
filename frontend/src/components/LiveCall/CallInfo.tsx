@@ -102,6 +102,19 @@ export const CallInfo: React.FC<CallInfoProps> = ({
           <Chip label={call.listening_mode} size="small" variant="outlined" />
         </Box>
 
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Phone fontSize="small" color="action" />
+          <Typography variant="body2" color="text.secondary">
+            Direction:
+          </Typography>
+          <Chip 
+            label={call.direction} 
+            size="small" 
+            variant="outlined"
+            color={call.direction === 'outbound' ? 'primary' : 'secondary'}
+          />
+        </Box>
+
         <Box>
           <Typography variant="body2" color="text.secondary">
             Started:

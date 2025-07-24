@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from core.database import get_db
 from services.signalwire import SignalWireService
 from services.call_processor import CallProcessor
@@ -120,6 +120,7 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
     # Get variables from the request - SignalWire sends them differently based on the request
     destination_number = ""
     from_number = settings.signalwire_from_number or "+12544645483"  # Use the from_number from env
+    direction = "outbound"  # Default to outbound
     
     # Try to get parameters from different sources
     if request.method == "POST":
@@ -141,6 +142,9 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
             # Also check direct form fields
             if not destination_number:
                 destination_number = form_data.get("destination_number", "")
+            
+            # Check for direction
+            direction = form_data.get("direction", "outbound")
                 
         except:
             # Try JSON body
@@ -149,11 +153,13 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
                 logger.info(f"JSON body: {body}")
                 user_vars = body.get("userVariables", body)
                 destination_number = user_vars.get("destination_number", "")
+                direction = body.get("direction", user_vars.get("direction", "outbound"))
             except:
                 pass
     else:
         # GET request - check query parameters
         destination_number = request.query_params.get("destination_number", "")
+        direction = request.query_params.get("direction", "outbound")
         logger.info(f"Query params: {dict(request.query_params)}")
     
     # Use the base URL from settings
@@ -164,8 +170,13 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
         # For testing, use a default number
         destination_number = "+19184238080"  # Default test number
     
-    logger.info(f"Generating SWML for call to {destination_number} from {from_number}")
+    logger.info(f"Generating SWML for {direction} call to {destination_number} from {from_number}")
     logger.info(f"Base URL: {base_url}")
+    
+    # Set transcription direction based on call direction
+    # For outbound: remote-caller first (customer), then local-caller (agent)
+    # For inbound: local-caller first (agent), then remote-caller (customer)
+    transcription_direction = ["remote-caller", "local-caller"] if direction == "outbound" else ["local-caller", "remote-caller"]
     
     # Build the complete SWML response using userVariables
     swml_response = {
@@ -190,10 +201,7 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
                                 "live_events": True,
                                 "ai_summary": True,
                                 "debug_level": 2,
-                                "direction": [
-                                    "remote-caller",
-                                    "local-caller"
-                                ]
+                                "direction": transcription_direction
                             }
                         }
                     }
@@ -203,7 +211,6 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
                         "to": "%{vars.userVariables.destination_number}",
                         "from": "%{vars.userVariables.from_number}",
                         "timeout": 30,
-                        "answer_on_bridge": False,
                         "call_state_events": ["created", "ringing", "answered", "ended"],
                         "call_state_url": f"{base_url}/api/webhooks/call-state"
                     }
@@ -239,6 +246,9 @@ async def handle_transcription(
         # Confidence is at top level, not in utterance
         confidence = data.get("confidence", 1.0)
         
+        # Log the raw utterance data to debug speaker role
+        logger.info(f"Raw utterance data: {json.dumps(utterance, indent=2)}")
+        
         # Get call info
         call_info = data.get("call_info", {})
         call_id = call_info.get("call_id", "")
@@ -261,14 +271,18 @@ async def handle_transcription(
         logger.info(f"  - lang: {utterance.get('lang', 'NOT PROVIDED')}")
         logger.info(f"  - tokens: {utterance.get('tokens', 'NOT PROVIDED')}")
         logger.info(f"  - user_vars: {user_vars}")
+        logger.info(f"  - direction from user_vars: {user_vars.get('direction', 'NOT PROVIDED')}")
         logger.info("="*80)
         
         # Skip empty transcriptions
         if not text.strip():
             return {"status": "ignored", "reason": "empty transcription"}
         
-        # Map speaker role to our format
-        speaker_mapped = "customer" if speaker == "remote-caller" else "agent" if speaker == "local-caller" else speaker
+        # Map speaker role to our format based on call direction
+        # For outbound calls: local-caller = agent, remote-caller = customer
+        # For inbound calls: remote-caller = customer, local-caller = agent
+        # Default to outbound mapping if direction is not set
+        speaker_mapped = speaker  # Default fallback
         
         # Get or create call record
         from sqlalchemy import select
@@ -281,17 +295,54 @@ async def handle_transcription(
         
         if not call:
             # Create new call record
+            # Try to determine direction from user variables or default to outbound
+            call_direction = user_vars.get("direction", "outbound")
             call = Call(
                 signalwire_call_id=call_id,
                 phone_number=user_vars.get("destination_number", "Unknown"),
                 status="active",
                 listening_mode="both",
+                direction=call_direction,
                 raw_data=data  # Store the entire webhook payload
             )
             db.add(call)
             await db.commit()
             await db.refresh(call)
-            logger.info(f"Created new call record: {call.id}")
+            logger.info(f"Created new call record: {call.id} with direction: {call_direction}")
+        else:
+            # If call exists but direction is not set, update it from user variables
+            if not call.direction or call.direction == "":
+                call_direction = user_vars.get("direction", "outbound")
+                call.direction = call_direction
+                await db.commit()
+                logger.info(f"Updated existing call {call.id} with direction: {call_direction}")
+        
+        # Now map speaker based on call direction
+        logger.info(f"Call direction from database: {call.direction}")
+        logger.info(f"Original speaker role from webhook: {speaker}")
+        
+        if call.direction == "outbound":
+            # Outbound: remote-caller = agent (you), local-caller = customer (person you called)
+            # This is because SignalWire considers the PSTN leg as "local" in the context of SWML
+            if speaker == "remote-caller":
+                speaker_mapped = "agent"
+            elif speaker == "local-caller":
+                speaker_mapped = "customer"
+            else:
+                speaker_mapped = speaker  # fallback
+                logger.warning(f"Unknown speaker role for outbound call: {speaker}")
+        else:  # inbound
+            # Inbound: local-caller = agent, remote-caller = customer
+            # This is the expected mapping for inbound calls
+            if speaker == "local-caller":
+                speaker_mapped = "agent"
+            elif speaker == "remote-caller":
+                speaker_mapped = "customer"
+            else:
+                speaker_mapped = speaker  # fallback
+                logger.warning(f"Unknown speaker role for inbound call: {speaker}")
+        
+        logger.info(f"FINAL Speaker mapping: {speaker} -> {speaker_mapped} (call direction: {call.direction})")
         
         # Create transcription record
         transcription = Transcription(
@@ -299,7 +350,7 @@ async def handle_transcription(
             speaker=speaker_mapped,
             text=text,
             confidence=confidence,
-            timestamp=datetime.fromtimestamp(timestamp / 1000000) if timestamp else datetime.utcnow(),  # Convert microseconds
+            timestamp=datetime.fromtimestamp(timestamp / 1000000, tz=timezone.utc) if timestamp else datetime.now(timezone.utc),  # Convert microseconds
             raw_data=data  # Store the entire webhook payload
         )
         db.add(transcription)
@@ -476,6 +527,7 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
                 phone_number=phone_number,
                 status="active",
                 listening_mode="both",
+                direction=direction,  # Store call direction from params
                 raw_data=data  # Store the entire webhook payload
             )
             if start_time:
@@ -516,6 +568,7 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
         
         # Broadcast status update to WebSocket clients
         if result["status"] == "success":
+            logger.info(f"Broadcasting call:status event for call {result['call_id']} with status: {result['call_status']}")
             await websocket_manager.broadcast_to_call(
                 result["call_id"],
                 {
@@ -527,6 +580,7 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
                     }
                 }
             )
+            logger.info(f"Broadcast complete for call {result['call_id']}")
         
         return result
         

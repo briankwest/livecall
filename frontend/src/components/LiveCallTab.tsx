@@ -45,7 +45,8 @@ export const LiveCallTab: React.FC = () => {
   const { data: activeCalls } = useQuery({
     queryKey: ['calls', 'active'],
     queryFn: () => callsService.listCalls({ status: 'active', limit: 1 }),
-    refetchInterval: 5000,
+    refetchInterval: 30000, // Reduced from 5 seconds to 30 seconds
+    refetchIntervalInBackground: false, // Don't refetch when tab is not active
   });
 
   useEffect(() => {
@@ -97,6 +98,11 @@ export const LiveCallTab: React.FC = () => {
           timestamp: message.data.timestamp,
         };
         setTranscriptions((prev) => [...prev, newTranscription]);
+        
+        // If we receive transcriptions, the call must be active
+        if (activeCall && activeCall.status !== 'active') {
+          setActiveCall({ ...activeCall, status: 'active' });
+        }
         break;
 
       case 'ai:suggestion':
@@ -108,9 +114,24 @@ export const LiveCallTab: React.FC = () => {
 
       case 'call:status':
         if (message.data.status === 'ended') {
-          queryClient.invalidateQueries({ queryKey: ['calls'] });
-          enqueueSnackbar('Call has ended', { variant: 'info' });
+          // Clean up all call-related state
           setActiveCall(null);
+          setTranscriptions([]);
+          setAiSuggestions([]);
+          setContextSummary('');
+          setContextTopics([]);
+          setSelectedDocument(null);
+          
+          // Invalidate queries to refresh data
+          queryClient.invalidateQueries({ queryKey: ['calls'] });
+          queryClient.invalidateQueries({ queryKey: ['transcriptions'] });
+          
+          enqueueSnackbar('Call has ended', { variant: 'info' });
+        } else if (message.data.call_state === 'answered' || message.data.status === 'active') {
+          // Update the active call to show it's answered
+          if (activeCall) {
+            setActiveCall({ ...activeCall, status: 'active' });
+          }
         }
         break;
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from core.database import get_db
 from core.security import get_current_user
@@ -25,6 +25,7 @@ class CallResponse(BaseModel):
     duration_seconds: Optional[int]
     status: str
     listening_mode: str
+    direction: str = "outbound"  # Add direction field
     transcription_count: Optional[int] = 0
     documents_accessed: Optional[int] = 0
 
@@ -88,6 +89,7 @@ async def list_calls(
             duration_seconds=call.duration_seconds,
             status=call.status,
             listening_mode=call.listening_mode,
+            direction=call.direction,
             transcription_count=trans_count,
             documents_accessed=doc_count
         ))
@@ -130,8 +132,9 @@ async def get_call(
         start_time=call.start_time,
         end_time=call.end_time,
         duration_seconds=call.duration_seconds,
-        status=call.status.value,
-        listening_mode=call.listening_mode.value,
+        status=call.status,
+        listening_mode=call.listening_mode,
+        direction=call.direction,
         transcription_count=trans_count,
         documents_accessed=doc_count
     )
@@ -210,7 +213,7 @@ async def end_call(
         
     # Update call status
     call.status = "ended"
-    call.end_time = datetime.utcnow()
+    call.end_time = datetime.now(timezone.utc)
     if call.start_time:
         duration = (call.end_time - call.start_time).total_seconds()
         call.duration_seconds = int(duration)
@@ -263,7 +266,8 @@ async def initiate_call(
                 phone_number=request.to_number,
                 agent_id=current_user.username,
                 status="active",  # WebRTC calls are active when we get them
-                listening_mode=request.listening_mode
+                listening_mode=request.listening_mode,
+                direction="outbound"  # WebRTC calls are always outbound from agent
             )
             
             db.add(new_call)
@@ -310,7 +314,8 @@ async def initiate_call(
                 phone_number=request.to_number,
                 agent_id=current_user.username,
                 status="initiated",
-                listening_mode=request.listening_mode
+                listening_mode=request.listening_mode,
+                direction="outbound"  # API calls are outbound
             )
             
             db.add(new_call)

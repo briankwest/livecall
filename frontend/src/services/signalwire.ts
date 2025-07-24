@@ -125,6 +125,23 @@ class SignalWireService {
     
     const callerId = notification.invite?.details?.caller_id_number || 'Unknown';
     
+    // Set up event handlers on the invite
+    if (notification.invite) {
+      notification.invite.on('state', (state: any) => {
+        console.log('Incoming call state changed:', state);
+        this.emit('call.state', { 
+          id: notification.invite.id, 
+          state: state.state || state 
+        });
+      });
+      
+      notification.invite.on('destroy', () => {
+        console.log('Incoming call destroyed');
+        this.currentCall = null;
+        this.emit('call.ended', { id: notification.invite.id });
+      });
+    }
+    
     this.emit('call.received', {
       id: notification.invite.id,
       direction: 'inbound',
@@ -149,7 +166,8 @@ class SignalWireService {
         video: false,
         userVariables: {
           destination_number: phoneNumber,
-          from_number: this.config?.from_number || ''
+          from_number: this.config?.from_number || '',
+          direction: 'outbound'  // Explicitly set direction for proper speaker mapping
         }
       };
       
@@ -160,16 +178,86 @@ class SignalWireService {
       // Create a call
       const call = await this.client.dial(options);
       
-      // Set up event handler for call end
+      // Set up event handlers for call state changes
       call.on('destroy', () => {
         console.log('Call ended');
         this.currentCall = null;
         this.emit('call.ended', { id: call.id });
       });
       
+      // Listen for state changes
+      call.on('state', (state: any) => {
+        console.log('Call state event:', state);
+        const stateValue = typeof state === 'string' ? state : state.state || state.callState || 'unknown';
+        this.emit('call.state', { 
+          id: call.id, 
+          state: stateValue 
+        });
+      });
+      
+      // Listen for state.update which SignalWire v3 uses
+      call.on('state.update', (update: any) => {
+        console.log('Call state.update event:', update);
+        const stateValue = update?.state || update?.callState || update;
+        this.emit('call.state', { 
+          id: call.id, 
+          state: stateValue 
+        });
+      });
+      
+      // Listen for specific state events
+      call.on('state.updated', (params: any) => {
+        console.log('Call state.updated event:', params);
+        if (params?.state) {
+          this.emit('call.state', { 
+            id: call.id, 
+            state: params.state 
+          });
+        }
+      });
+      
+      // Listen for when the call is answered
+      call.on('answer', () => {
+        console.log('Call answered');
+        this.emit('call.state', { 
+          id: call.id, 
+          state: 'answered' 
+        });
+      });
+      
+      // Listen for ringing
+      call.on('ringing', () => {
+        console.log('Call ringing');
+        this.emit('call.state', { 
+          id: call.id, 
+          state: 'ringing' 
+        });
+      });
+      
+      // Listen for connect event
+      call.on('connect', () => {
+        console.log('Call connected');
+        this.emit('call.state', { 
+          id: call.id, 
+          state: 'answered' 
+        });
+      });
+      
+      // Add a catch-all event listener for debugging
+      const originalEmit = call.emit;
+      call.emit = function(event: string, ...args: any[]) {
+        console.log(`SignalWire call event: ${event}`, args);
+        return originalEmit.apply(call, [event, ...args]);
+      };
+      
       // Start the call
       await call.start();
       this.currentCall = call;
+      
+      // Check if call has a state property we can monitor
+      if (call.state) {
+        console.log('Initial call state:', call.state);
+      }
 
       this.emit('call.started', {
         id: call.id,
@@ -203,11 +291,20 @@ class SignalWireService {
       const call = await this.currentCall.accept(options);
       this.currentCall = call;
       
-      // Set up event handler for call end
+      // Set up event handlers for call state changes
       call.on('destroy', () => {
         console.log('Call ended');
         this.currentCall = null;
         this.emit('call.ended', { id: call.id });
+      });
+      
+      // Listen for state changes
+      call.on('state', (state: any) => {
+        console.log('Call state changed:', state);
+        this.emit('call.state', { 
+          id: call.id, 
+          state: state.state || state 
+        });
       });
       
       this.emit('call.answered', {
@@ -314,6 +411,10 @@ class SignalWireService {
     if (handlers) {
       handlers.forEach(handler => handler(data));
     }
+  }
+  
+  getCurrentCall(): any {
+    return this.currentCall;
   }
 
   disconnect(): void {

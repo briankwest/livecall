@@ -39,6 +39,7 @@ export const WebPhone: React.FC = () => {
   const [callDuration, setCallDuration] = useState(0);
   const [showDialpad, setShowDialpad] = useState(false);
   const [incomingCall, setIncomingCall] = useState<CallState | null>(null);
+  const [isCallInProgress, setIsCallInProgress] = useState(false);
 
   // Initialize WebPhone when component mounts and user is authenticated
   useEffect(() => {
@@ -102,19 +103,46 @@ export const WebPhone: React.FC = () => {
     signalWireService.on('call.started', (call: CallState) => {
       setCurrentCall(call);
       setIncomingCall(null);
+      setIsCallInProgress(true);
+      
+      // After a delay, check if we're still in 'trying' state and update to 'ringing'
+      setTimeout(() => {
+        setCurrentCall(prev => {
+          if (prev && prev.state === 'trying') {
+            return { ...prev, state: 'ringing' };
+          }
+          return prev;
+        });
+      }, 2000);
+      
+      // After another delay, if still not answered, assume answered when transcriptions start
+      setTimeout(() => {
+        setCurrentCall(prev => {
+          if (prev && (prev.state === 'trying' || prev.state === 'ringing')) {
+            return { ...prev, state: 'answered', startTime: new Date() };
+          }
+          return prev;
+        });
+      }, 5000);
     });
 
     signalWireService.on('call.state', (data: any) => {
+      console.log('Call state event received:', data);
       setCurrentCall(prev => prev ? { ...prev, state: data.state } : null);
       
       if (data.state === 'answered') {
         setCurrentCall(prev => prev ? { ...prev, startTime: new Date() } : null);
+        setIsCallInProgress(false); // Call is now connected, not "in progress"
+      } else if (data.state === 'ringing') {
+        // Call is ringing on the other end
+        enqueueSnackbar('Call is ringing...', { variant: 'info' });
       }
     });
 
     signalWireService.on('call.ended', () => {
       setCurrentCall(null);
       setCallDuration(0);
+      setIsCallInProgress(false);
       enqueueSnackbar('Call ended', { variant: 'info' });
     });
 
@@ -127,17 +155,39 @@ export const WebPhone: React.FC = () => {
     });
   };
 
-  // Update call duration timer
+  // Update call duration timer and check call state
   useEffect(() => {
-    if (currentCall?.startTime && currentCall.state === 'answered') {
-      const interval = setInterval(() => {
-        const duration = Math.floor((Date.now() - currentCall.startTime!.getTime()) / 1000);
-        setCallDuration(duration);
-      }, 1000);
+    if (currentCall) {
+      // Check if the actual SignalWire call object has a state we can read
+      const checkCallState = () => {
+        const actualCall = signalWireService.getCurrentCall();
+        if (actualCall && actualCall.state) {
+          console.log('Actual call state from SDK:', actualCall.state);
+          if (actualCall.state !== currentCall.state) {
+            setCurrentCall(prev => prev ? { ...prev, state: actualCall.state } : null);
+          }
+        }
+      };
+      
+      // Check state immediately and then periodically
+      checkCallState();
+      const stateInterval = setInterval(checkCallState, 1000);
+      
+      if (currentCall.startTime && currentCall.state === 'answered') {
+        const durationInterval = setInterval(() => {
+          const duration = Math.floor((Date.now() - currentCall.startTime!.getTime()) / 1000);
+          setCallDuration(duration);
+        }, 1000);
 
-      return () => clearInterval(interval);
+        return () => {
+          clearInterval(stateInterval);
+          clearInterval(durationInterval);
+        };
+      }
+      
+      return () => clearInterval(stateInterval);
     }
-  }, [currentCall?.startTime, currentCall?.state]);
+  }, [currentCall]);
 
   const handleMakeCall = async () => {
     if (!phoneNumber.trim()) {
@@ -145,10 +195,17 @@ export const WebPhone: React.FC = () => {
       return;
     }
 
+    if (isCallInProgress) {
+      enqueueSnackbar('Call already in progress', { variant: 'warning' });
+      return;
+    }
+
+    setIsCallInProgress(true);
     try {
       await signalWireService.makeCall(phoneNumber);
     } catch (error) {
       enqueueSnackbar('Failed to make call', { variant: 'error' });
+      setIsCallInProgress(false);
     }
   };
 
@@ -334,9 +391,9 @@ export const WebPhone: React.FC = () => {
                 size="large"
                 startIcon={<Phone />}
                 onClick={handleMakeCall}
-                disabled={!phoneNumber.trim()}
+                disabled={!phoneNumber.trim() || isCallInProgress || !isInitialized}
               >
-                Call
+                {isCallInProgress ? 'Calling...' : 'Call'}
               </Button>
             </Grid>
           ) : (
@@ -382,8 +439,6 @@ export const WebPhone: React.FC = () => {
           )}
         </Grid>
 
-        {/* Hidden SignalWire container */}
-        <div id="signalwire-container" style={{ display: 'none' }} />
       </Paper>
 
       {/* Incoming Call Dialog */}
