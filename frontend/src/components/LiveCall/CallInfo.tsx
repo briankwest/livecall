@@ -141,13 +141,13 @@ export const CallInfo: React.FC<CallInfoProps> = ({
         )}
       </Stack>
 
-      {/* Show Close Call button - disabled while call is active */}
+      {/* Show Close Call button - enabled only when call has ended */}
       {onCloseCall && (
         <Button
           variant="contained"
           color="primary"
           onClick={onCloseCall}
-          disabled={call.status === 'active'}
+          disabled={call.status !== 'ended'}
           fullWidth
           sx={{ mt: 3 }}
         >
