@@ -9,16 +9,20 @@ import {
   DialogActions,
   Button,
   Typography,
+  Stack,
 } from '@mui/material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSnackbar } from 'notistack';
 import { CallInfo } from './LiveCall/CallInfo';
 import { TranscriptionPanel } from './LiveCall/TranscriptionPanel';
 import { AIAssistancePanel } from './LiveCall/AIAssistancePanel';
+import { SentimentSummary } from './LiveCall/SentimentSummary';
 import { WebPhone } from './WebPhone';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useWebPhoneSync } from '../hooks/useWebPhoneSync';
+import { useAuth } from '../contexts/AuthContext';
 import { callsService, documentsService } from '../services/api';
+import { signalWireService } from '../services/signalwire';
 import {
   Call,
   Transcription,
@@ -30,6 +34,7 @@ import {
 export const LiveCallTab: React.FC = () => {
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
@@ -37,29 +42,36 @@ export const LiveCallTab: React.FC = () => {
   const [contextSummary, setContextSummary] = useState<string>('');
   const [contextTopics, setContextTopics] = useState<string[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [keepCallVisible, setKeepCallVisible] = useState(false);
 
   // Sync WebPhone calls with backend
   useWebPhoneSync();
 
-  // Fetch active call
+  // Fetch active call - no polling, rely on WebSocket updates
   const { data: activeCalls } = useQuery({
     queryKey: ['calls', 'active'],
     queryFn: () => callsService.listCalls({ status: 'active', limit: 1 }),
-    refetchInterval: 30000, // Reduced from 5 seconds to 30 seconds
-    refetchIntervalInBackground: false, // Don't refetch when tab is not active
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60 * 1000, // Consider data fresh for 5 minutes
+    refetchInterval: false, // Disable automatic refetching
+    refetchIntervalInBackground: false, // Disable background refetching
   });
 
   useEffect(() => {
+    console.log('Active calls from backend:', activeCalls);
     if (activeCalls && activeCalls.length > 0) {
+      console.log('Setting active call:', activeCalls[0]);
       setActiveCall(activeCalls[0]);
-    } else {
+      setKeepCallVisible(true);
+    } else if (!keepCallVisible) {
+      console.log('No active calls found and not keeping visible');
       setActiveCall(null);
       setTranscriptions([]);
       setAiSuggestions([]);
       setContextSummary('');
       setContextTopics([]);
     }
-  }, [activeCalls]);
+  }, [activeCalls, keepCallVisible]);
 
   // Fetch transcriptions for active call
   const { data: initialTranscriptions } = useQuery({
@@ -96,6 +108,8 @@ export const LiveCallTab: React.FC = () => {
           speaker: message.data.speaker === 'agent' ? 'agent' : 'customer',
           text: message.data.text,
           timestamp: message.data.timestamp,
+          sentiment: message.data.sentiment,
+          sentiment_score: message.data.sentiment_score,
         };
         setTranscriptions((prev) => [...prev, newTranscription]);
         
@@ -114,23 +128,30 @@ export const LiveCallTab: React.FC = () => {
 
       case 'call:status':
         if (message.data.status === 'ended') {
-          // Clean up all call-related state
-          setActiveCall(null);
-          setTranscriptions([]);
-          setAiSuggestions([]);
-          setContextSummary('');
-          setContextTopics([]);
-          setSelectedDocument(null);
+          // Update the call status but keep it visible
+          if (activeCall) {
+            setActiveCall({ ...activeCall, status: 'ended' });
+          }
           
-          // Invalidate queries to refresh data
-          queryClient.invalidateQueries({ queryKey: ['calls'] });
-          queryClient.invalidateQueries({ queryKey: ['transcriptions'] });
+          // Only invalidate if we don't have an active call to avoid unnecessary refetches
+          if (!keepCallVisible) {
+            queryClient.invalidateQueries({ queryKey: ['calls'] });
+            queryClient.invalidateQueries({ queryKey: ['transcriptions'] });
+          }
           
           enqueueSnackbar('Call has ended', { variant: 'info' });
         } else if (message.data.call_state === 'answered' || message.data.status === 'active') {
           // Update the active call to show it's answered
           if (activeCall) {
             setActiveCall({ ...activeCall, status: 'active' });
+          } else {
+            // Only invalidate if we don't have an active call yet
+            queryClient.invalidateQueries({ queryKey: ['calls', 'active'] });
+          }
+        } else if (message.data.call_state === 'created' || message.data.call_state === 'ringing') {
+          // Only invalidate if we don't have an active call yet
+          if (!activeCall) {
+            queryClient.invalidateQueries({ queryKey: ['calls', 'active'] });
           }
         }
         break;
@@ -141,8 +162,20 @@ export const LiveCallTab: React.FC = () => {
     }
   };
 
-  // WebSocket connection - only connect when there's an active call
-  const { sendMessage } = useWebSocket(activeCall?.id, {
+  // WebSocket connection - use a stable connection ID
+  // Don't switch between 'general' and call ID too frequently
+  const [wsConnectionId, setWsConnectionId] = useState<string>('general');
+  
+  useEffect(() => {
+    // Only switch to call-specific connection when we have a stable active call
+    if (activeCall?.id && activeCall.status === 'active') {
+      setWsConnectionId(activeCall.id);
+    } else if (!activeCall) {
+      setWsConnectionId('general');
+    }
+  }, [activeCall?.id, activeCall?.status]);
+  
+  const { sendMessage } = useWebSocket(wsConnectionId, {
     onMessage: handleWebSocketMessage,
   });
 
@@ -171,20 +204,29 @@ export const LiveCallTab: React.FC = () => {
         <Grid item xs={12} md={3}>
           <WebPhone />
           {activeCall && (
-            <Box sx={{ mt: 2 }}>
-              <CallInfo
-                call={activeCall}
-                onEndCall={() => endCallMutation.mutate(activeCall.id)}
-                isEnding={endCallMutation.isPending}
-              />
-            </Box>
+            <>
+              <Box sx={{ mt: 2 }}>
+                <CallInfo
+                  call={activeCall}
+                  agentUsername={user?.username}
+                  onCloseCall={() => {
+                    setActiveCall(null);
+                    setTranscriptions([]);
+                    setAiSuggestions([]);
+                    setContextSummary('');
+                    setContextTopics([]);
+                    setKeepCallVisible(false);
+                  }}
+                />
+              </Box>
+            </>
           )}
         </Grid>
 
         {/* Middle and Right Columns - Call Details */}
         {activeCall ? (
           <>
-            <Grid item xs={12} md={5}>
+            <Grid item xs={12} md={5} sx={{ height: '600px' }}>
               <TranscriptionPanel
                 transcriptions={transcriptions}
                 isLive={activeCall.status === 'active'}
@@ -192,13 +234,16 @@ export const LiveCallTab: React.FC = () => {
             </Grid>
 
             <Grid item xs={12} md={4}>
-              <AIAssistancePanel
-                suggestions={aiSuggestions}
-                summary={contextSummary}
-                topics={contextTopics}
-                onDocumentClick={handleDocumentClick}
-                onFeedback={handleDocumentFeedback}
-              />
+              <Stack spacing={2}>
+                <SentimentSummary transcriptions={transcriptions} />
+                <AIAssistancePanel
+                  suggestions={aiSuggestions}
+                  summary={contextSummary}
+                  topics={contextTopics}
+                  onDocumentClick={handleDocumentClick}
+                  onFeedback={handleDocumentFeedback}
+                />
+              </Stack>
             </Grid>
           </>
         ) : (

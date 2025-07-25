@@ -18,17 +18,19 @@ export const useWebSocket = (
     onConnect,
     onDisconnect,
     autoReconnect = true,
-    reconnectInterval = 3000,
+    reconnectInterval = 5000, // Increase to 5 seconds
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 10;
 
   const connect = useCallback(() => {
     // Don't connect if no callId or if already connected
-    if (!callId || callId === 'null' || wsRef.current?.readyState === WebSocket.OPEN) {
+    if (!callId || wsRef.current?.readyState === WebSocket.OPEN) {
       return;
     }
 
@@ -51,6 +53,7 @@ export const useWebSocket = (
       wsRef.current.onopen = () => {
         console.log('WebSocket connected');
         setIsConnected(true);
+        reconnectAttemptsRef.current = 0; // Reset attempts on successful connection
         onConnect?.();
       };
 
@@ -69,15 +72,18 @@ export const useWebSocket = (
         setIsConnected(false);
         onDisconnect?.();
 
-        // Only auto-reconnect if we still have a valid callId
-        if (autoReconnect && callId && callId !== 'null') {
-          console.log(`Will attempt to reconnect in ${reconnectInterval}ms`);
+        // Auto-reconnect if enabled and we have a callId (including 'general')
+        if (autoReconnect && callId && reconnectAttemptsRef.current < maxReconnectAttempts) {
+          reconnectAttemptsRef.current++;
+          console.log(`Will attempt to reconnect in ${reconnectInterval}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`);
           reconnectTimeoutRef.current = setTimeout(() => {
             // Double-check callId is still valid before reconnecting
-            if (callId && callId !== 'null') {
+            if (callId) {
               connect();
             }
           }, reconnectInterval);
+        } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+          console.error('Max reconnection attempts reached, giving up');
         }
       };
 
@@ -110,8 +116,8 @@ export const useWebSocket = (
   }, []);
 
   useEffect(() => {
-    // Only connect if we have a valid callId
-    if (callId && callId !== 'null') {
+    // Connect if we have any callId (including 'general')
+    if (callId) {
       connect();
     } else {
       // If no callId, ensure we're disconnected

@@ -12,7 +12,12 @@ import {
   Button,
   IconButton
 } from '@mui/material';
-import { Close as CloseIcon } from '@mui/icons-material';
+import { 
+  Close as CloseIcon,
+  SentimentVerySatisfied,
+  SentimentNeutral,
+  SentimentVeryDissatisfied 
+} from '@mui/icons-material';
 import { format } from 'date-fns';
 import { Transcription } from '../../types';
 
@@ -46,6 +51,18 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
     setSelectedTranscription(null);
   };
 
+  const getSentimentIcon = (sentiment?: string) => {
+    switch (sentiment) {
+      case 'positive':
+        return <SentimentVerySatisfied sx={{ color: 'success.main' }} />;
+      case 'negative':
+        return <SentimentVeryDissatisfied sx={{ color: 'error.main' }} />;
+      case 'neutral':
+      default:
+        return <SentimentNeutral sx={{ color: 'warning.main' }} />;
+    }
+  };
+
   return (
     <>
       <Paper
@@ -59,7 +76,7 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
       >
       <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
         <Typography variant="h6">Transcription</Typography>
-        {isLive && <LinearProgress sx={{ mt: 1 }} />}
+        {isLive && transcriptions.length === 0 && <LinearProgress sx={{ mt: 1 }} />}
       </Box>
 
       <Box
@@ -86,12 +103,15 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
                 alignItems: 'flex-start',
               }}
             >
-              <Chip
-                label={transcription.speaker}
-                size="small"
-                color={transcription.speaker === 'agent' ? 'primary' : 'secondary'}
-                sx={{ minWidth: 80 }}
-              />
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {getSentimentIcon(transcription.sentiment)}
+                <Chip
+                  label={transcription.speaker}
+                  size="small"
+                  color={transcription.speaker === 'agent' ? 'primary' : 'secondary'}
+                  sx={{ minWidth: 80 }}
+                />
+              </Box>
               <Box 
                 sx={{ 
                   flex: 1,
@@ -173,6 +193,18 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
               <Typography variant="body2" color="text.secondary">
                 <strong>Speaker:</strong> {selectedTranscription.speaker === 'agent' ? 'Agent' : 'Customer'}
               </Typography>
+              {selectedTranscription.sentiment && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    <strong>Sentiment:</strong>
+                  </Typography>
+                  {getSentimentIcon(selectedTranscription.sentiment)}
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedTranscription.sentiment}
+                    {selectedTranscription.sentiment_score && ` (${Math.round(selectedTranscription.sentiment_score * 100)}%)`}
+                  </Typography>
+                </Box>
+              )}
             </Box>
           </Box>
         )}

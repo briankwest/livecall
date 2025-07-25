@@ -74,7 +74,9 @@ export const callsService = {
     status?: string;
     webrtc_call_id?: string;
   }): Promise<Call[]> => {
+    console.log('API: Fetching calls with params:', params);
     const response = await api.get<Call[]>('/api/calls/', { params });
+    console.log('API: Received calls:', response.data);
     return response.data;
   },
   

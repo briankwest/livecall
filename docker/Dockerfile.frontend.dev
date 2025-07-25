@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apk add --no-cache git
 
 # Create non-root user
-RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
+RUN adduser -D -u 1001 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Copy package files

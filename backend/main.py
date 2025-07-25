@@ -23,6 +23,23 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         from sqlalchemy import MetaData
         await conn.run_sync(Base.metadata.create_all)
+    
+    # Run database migrations
+    try:
+        from run_migrations import run_all_migrations
+        logger.info("Running database migrations...")
+        await run_all_migrations()
+    except Exception as e:
+        logger.warning(f"Could not run migrations: {e}")
+    
+    # Initialize demo data (including demo user)
+    try:
+        from init_demo import init_database
+        logger.info("Initializing demo data...")
+        await init_database()
+    except Exception as e:
+        logger.warning(f"Could not initialize demo data: {e}")
+    
     yield
     # Shutdown
     logger.info("Shutting down LiveCall API...")

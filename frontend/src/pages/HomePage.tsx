@@ -4,6 +4,7 @@ import { Box, Container, Tab, Tabs, Typography } from '@mui/material';
 import { Phone, History } from '@mui/icons-material';
 import { CallHistory } from '../components/CallHistory';
 import { LiveCallTab } from '../components/LiveCallTab';
+import { Header } from '../components/Header';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -45,15 +46,17 @@ export const HomePage: React.FC = () => {
   };
 
   return (
-    <Container maxWidth="lg" sx={{ py: 3 }}>
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h4" gutterBottom>
-          LiveCall Assistant
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Real-time call assistance powered by AI
-        </Typography>
-      </Box>
+    <>
+      <Header />
+      <Container maxWidth="lg" sx={{ py: 3 }}>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h4" gutterBottom>
+            Real-time Call Assistant
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            AI-powered assistance for live customer calls
+          </Typography>
+        </Box>
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tabValue} onChange={handleTabChange} aria-label="homepage tabs">
@@ -70,5 +73,6 @@ export const HomePage: React.FC = () => {
         <LiveCallTab />
       </TabPanel>
     </Container>
+    </>
   );
 };

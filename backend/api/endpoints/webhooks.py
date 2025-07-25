@@ -120,9 +120,19 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
     # Get variables from the request - SignalWire sends them differently based on the request
     destination_number = ""
     from_number = settings.signalwire_from_number or "+12544645483"  # Use the from_number from env
-    direction = "outbound"  # Default to outbound
     
-    # Try to get parameters from different sources
+    # ALWAYS check query parameters first (for both GET and POST)
+    # This is important because SignalWire may send POST with query params
+    direction = request.query_params.get("direction", "outbound")
+    username = request.query_params.get("username", "")  # Get username for inbound calls
+    
+    # Override with query params if they exist
+    if request.query_params.get("destination_number"):
+        destination_number = request.query_params.get("destination_number", "")
+    
+    logger.info(f"Query params: {dict(request.query_params)}")
+    
+    # Try to get additional parameters from body/form data
     if request.method == "POST":
         try:
             # SignalWire might send form data
@@ -143,8 +153,9 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
             if not destination_number:
                 destination_number = form_data.get("destination_number", "")
             
-            # Check for direction
-            direction = form_data.get("direction", "outbound")
+            # Check for direction (only override if not already set from query params)
+            if not request.query_params.get("direction"):
+                direction = form_data.get("direction", direction)
                 
         except:
             # Try JSON body
@@ -152,26 +163,27 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
                 body = await request.json()
                 logger.info(f"JSON body: {body}")
                 user_vars = body.get("userVariables", body)
-                destination_number = user_vars.get("destination_number", "")
-                direction = body.get("direction", user_vars.get("direction", "outbound"))
+                if not destination_number:
+                    destination_number = user_vars.get("destination_number", "")
+                # Only override direction if not set from query params
+                if not request.query_params.get("direction"):
+                    direction = body.get("direction", user_vars.get("direction", direction))
             except:
                 pass
-    else:
-        # GET request - check query parameters
-        destination_number = request.query_params.get("destination_number", "")
-        direction = request.query_params.get("direction", "outbound")
-        logger.info(f"Query params: {dict(request.query_params)}")
     
     # Use the base URL from settings
     base_url = settings.public_url
     
-    if not destination_number:
+    if not destination_number and direction == "outbound":
         logger.error("No destination number provided in request")
         # For testing, use a default number
         destination_number = "+19184238080"  # Default test number
     
-    logger.info(f"Generating SWML for {direction} call to {destination_number} from {from_number}")
-    logger.info(f"Base URL: {base_url}")
+    logger.info(f"Generating SWML for {direction} call")
+    logger.info(f"  destination_number: {destination_number}")
+    logger.info(f"  from_number: {from_number}")
+    logger.info(f"  username: {username}")
+    logger.info(f"  Base URL: {base_url}")
     
     # Set transcription direction based on call direction
     # For outbound: remote-caller first (customer), then local-caller (agent)
@@ -179,45 +191,79 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
     transcription_direction = ["remote-caller", "local-caller"] if direction == "outbound" else ["local-caller", "remote-caller"]
     
     # Build the complete SWML response using userVariables
-    swml_response = {
-        "version": "1.0.0",
-        "sections": {
-            "main": [
-                {
-                    "record_call": {
-                        "format": "mp3",
-                        "stereo": True,
-                        "direction": "both",
-                        "beep": False,
-                        "status_url": f"{base_url}/api/webhooks/recording-status"
-                    }
-                },
-                {
-                    "live_transcribe": {
-                        "action": {
-                            "start": {
-                                "webhook": f"{base_url}/api/webhooks/transcription",
-                                "lang": "en",
-                                "live_events": True,
-                                "ai_summary": True,
-                                "debug_level": 2,
-                                "direction": transcription_direction
-                            }
-                        }
-                    }
-                },
-                {
-                    "connect": {
-                        "to": "%{vars.userVariables.destination_number}",
-                        "from": "%{vars.userVariables.from_number}",
-                        "timeout": 30,
-                        "call_state_events": ["created", "ringing", "answered", "ended"],
-                        "call_state_url": f"{base_url}/api/webhooks/call-state"
+    # For inbound calls, remove "from" and set "to" as /private/username
+    if direction == "inbound" and username:
+        connect_config = {
+            "to": f"/private/{username}",
+            "timeout": 30,
+            "call_state_events": ["created", "ringing", "answered", "ended"],
+            "call_state_url": f"{base_url}/api/webhooks/call-state"
+        }
+        logger.info(f"Inbound call configuration - routing to: /private/{username}")
+    else:
+        # Outbound call configuration
+        connect_config = {
+            "to": "%{vars.userVariables.destination_number}",
+            "from": "%{vars.userVariables.from_number}",
+            "timeout": 30,
+            "call_state_events": ["created", "ringing", "answered", "ended"],
+            "call_state_url": f"{base_url}/api/webhooks/call-state"
+        }
+        logger.info(f"Outbound call configuration - to: {destination_number}, from: {from_number}")
+    
+    # Build SWML sections
+    main_sections = [
+        {
+            "record_call": {
+                "format": "mp3",
+                "stereo": True,
+                "direction": "both",
+                "beep": False,
+                "status_url": f"{base_url}/api/webhooks/recording-status"
+            }
+        },
+        {
+            "live_transcribe": {
+                "action": {
+                    "start": {
+                        "webhook": f"{base_url}/api/webhooks/transcription",
+                        "lang": "en",
+                        "live_events": True,
+                        "ai_summary": True,
+                        "debug_level": 2,
+                        "direction": transcription_direction
                     }
                 }
-            ]
+            }
+        },
+        {
+            "connect": connect_config
         }
-    }
+    ]
+    
+    # For outbound calls, userVariables come from the client dial command
+    # For inbound calls, we need to set them in SWML
+    if direction == "inbound":
+        swml_response = {
+            "version": "1.0.0",
+            "vars": {
+                "userVariables": {
+                    "direction": "inbound",
+                    "username": username
+                }
+            },
+            "sections": {
+                "main": main_sections
+            }
+        }
+    else:
+        # Outbound - userVariables come from client.dial()
+        swml_response = {
+            "version": "1.0.0",
+            "sections": {
+                "main": main_sections
+            }
+        }
     
     logger.info(f"Returning SWML: {swml_response}")
     return swml_response
@@ -285,13 +331,26 @@ async def handle_transcription(
         speaker_mapped = speaker  # Default fallback
         
         # Get or create call record
-        from sqlalchemy import select
+        from sqlalchemy import select, or_
         from models import Call, Transcription
         
+        # First check if there's a call with this ID
         result = await db.execute(
             select(Call).where(Call.signalwire_call_id == call_id)
         )
         call = result.scalar_one_or_none()
+        
+        # If not found, try finding by checking if any call's raw_data contains this call_id
+        # This handles the case where transcriptions come from the PSTN leg
+        if not call:
+            # Simple approach: check all active calls
+            result = await db.execute(
+                select(Call).where(Call.status == "active").order_by(Call.created_at.desc()).limit(1)
+            )
+            call = result.scalar_one_or_none()
+            
+            if call:
+                logger.info(f"Found active call {call.id} for transcription from call_id {call_id}")
         
         if not call:
             # Create new call record
@@ -344,12 +403,46 @@ async def handle_transcription(
         
         logger.info(f"FINAL Speaker mapping: {speaker} -> {speaker_mapped} (call direction: {call.direction})")
         
+        # Analyze sentiment for customer messages
+        sentiment = "neutral"
+        sentiment_score = 0.5
+        
+        if speaker_mapped == "customer" and text.strip():
+            try:
+                # Simple sentiment analysis based on keywords for now
+                text_lower = text.lower()
+                
+                # Negative indicators
+                negative_words = ['frustrated', 'angry', 'mad', 'terrible', 'awful', 'worst', 'hate', 'stupid', 'useless', 'broken', 'not working', 'doesn\'t work']
+                # Positive indicators
+                positive_words = ['thank', 'thanks', 'great', 'excellent', 'wonderful', 'perfect', 'awesome', 'happy', 'love', 'appreciate', 'helpful']
+                
+                negative_count = sum(1 for word in negative_words if word in text_lower)
+                positive_count = sum(1 for word in positive_words if word in text_lower)
+                
+                if negative_count > positive_count:
+                    sentiment = "negative"
+                    sentiment_score = 0.2
+                elif positive_count > negative_count:
+                    sentiment = "positive"
+                    sentiment_score = 0.8
+                else:
+                    sentiment = "neutral"
+                    sentiment_score = 0.5
+                    
+                logger.info(f"Sentiment analysis for customer: {sentiment} (score: {sentiment_score})")
+            except Exception as e:
+                logger.error(f"Error analyzing sentiment: {e}")
+                # Continue with defaults if sentiment analysis fails
+        
         # Create transcription record
         transcription = Transcription(
             call_id=call.id,
             speaker=speaker_mapped,
             text=text,
             confidence=confidence,
+            sentiment=sentiment,
+            sentiment_score=sentiment_score,
             timestamp=datetime.fromtimestamp(timestamp / 1000000, tz=timezone.utc) if timestamp else datetime.now(timezone.utc),  # Convert microseconds
             raw_data=data  # Store the entire webhook payload
         )
@@ -381,7 +474,9 @@ async def handle_transcription(
                         "speaker": speaker_mapped,
                         "text": text,
                         "timestamp": str(transcription.timestamp),
-                        "confidence": confidence
+                        "confidence": confidence,
+                        "sentiment": sentiment,
+                        "sentiment_score": sentiment_score
                     }
                 }
             )
@@ -433,6 +528,16 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
         segment_id = params.get("segment_id", "")
         call_state = params.get("call_state", "")
         direction = params.get("direction", "")
+        
+        # Also check channel_data for userVariables (like in transcription webhook)
+        channel_data = data.get("channel_data", {})
+        swml_vars = channel_data.get("SWMLVars", {})
+        user_vars = swml_vars.get("userVariables", {})
+        
+        # If direction not in params, check userVariables
+        if not direction and user_vars:
+            direction = user_vars.get("direction", "outbound")
+            logger.info(f"Got direction from userVariables: {direction}")
         
         logger.info("\nPARAMS FIELDS:")
         logger.info(f"  call_id: {call_id}")
@@ -512,18 +617,23 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
         
         # Use parent call ID if this is a child call (PSTN leg)
         # The parent call is the WebRTC call from the browser
-        search_call_id = parent.get("call_id") if parent else call_id
+        webrtc_call_id = parent.get("call_id") if parent else call_id
+        pstn_call_id = call_id
         
+        # Try to find existing call by either WebRTC or PSTN call ID
         result = await db.execute(
-            select(Call).where(Call.signalwire_call_id == search_call_id)
+            select(Call).where(
+                (Call.signalwire_call_id == webrtc_call_id) | 
+                (Call.signalwire_call_id == pstn_call_id)
+            )
         )
         call = result.scalar_one_or_none()
         
         if not call and call_state == "created":
-            # Create new call record
+            # Create new call record using WebRTC call ID as primary
             phone_number = device.get("params", {}).get("to_number") if device else "Unknown"
             call = Call(
-                signalwire_call_id=search_call_id,
+                signalwire_call_id=webrtc_call_id,  # Use WebRTC call ID as primary
                 phone_number=phone_number,
                 status="active",
                 listening_mode="both",
@@ -535,7 +645,7 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
             db.add(call)
             await db.commit()
             await db.refresh(call)
-            logger.info(f"Created new call record: {call.id} for call_id: {search_call_id}")
+            logger.info(f"Created new call record: {call.id} for call_id: {webrtc_call_id}")
         
         if call:
             # Update call based on state
@@ -569,17 +679,27 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
         # Broadcast status update to WebSocket clients
         if result["status"] == "success":
             logger.info(f"Broadcasting call:status event for call {result['call_id']} with status: {result['call_status']}")
+            status_message = {
+                "event": "call:status",
+                "data": {
+                    "call_id": result["call_id"],
+                    "status": result["call_status"],
+                    "call_state": call_state
+                }
+            }
+            
+            # Broadcast to specific call connections
             await websocket_manager.broadcast_to_call(
                 result["call_id"],
-                {
-                    "event": "call:status",
-                    "data": {
-                        "call_id": result["call_id"],
-                        "status": result["call_status"],
-                        "call_state": call_state
-                    }
-                }
+                status_message
             )
+            
+            # Also broadcast to general connections (for agents who haven't connected to specific call yet)
+            await websocket_manager.broadcast_to_call(
+                "general",
+                status_message
+            )
+            
             logger.info(f"Broadcast complete for call {result['call_id']}")
         
         return result

@@ -1,24 +1,12 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
 import { SnackbarProvider } from 'notistack';
 import { AuthProvider } from './contexts/AuthContext';
+import { CustomThemeProvider } from './contexts/ThemeContext';
 import { HomePage } from './pages/HomePage';
 import { Login } from './pages/Login';
 import { PrivateRoute } from './components/PrivateRoute';
-
-const theme = createTheme({
-  palette: {
-    primary: {
-      main: '#1976d2',
-    },
-    secondary: {
-      main: '#dc004e',
-    },
-  },
-});
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,8 +21,7 @@ function App() {
   // Force rebuild - HomePage with tabs
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
+      <CustomThemeProvider>
         <SnackbarProvider maxSnack={3}>
           <AuthProvider>
             <Router>
@@ -53,7 +40,7 @@ function App() {
             </Router>
           </AuthProvider>
         </SnackbarProvider>
-      </ThemeProvider>
+      </CustomThemeProvider>
     </QueryClientProvider>
   );
 }

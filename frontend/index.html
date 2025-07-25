@@ -2,12 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LiveCall - Real-time Call Assistant</title>
+    <!-- SignalWire SDK -->
+    <script type="text/javascript" src="https://cdn.signalwire.com/@signalwire/js@dev"></script>
   </head>
   <body>
     <div id="root"></div>
+    <!-- SignalWire container for WebRTC elements -->
+    <div id="signalwire-container" style="display: none;"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

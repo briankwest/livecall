@@ -16,6 +16,8 @@ class Transcription(Base):
     confidence = Column(Float)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     sequence_number = Column(Integer)
+    sentiment = Column(String(20), default='neutral')  # 'positive', 'neutral', 'negative'
+    sentiment_score = Column(Float, default=0.5)  # 0.0 to 1.0
     raw_data = Column(JSONB, default={})  # Store raw webhook data
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

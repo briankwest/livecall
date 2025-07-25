@@ -19,29 +19,29 @@ export const useWebPhoneSync = () => {
         // Just navigate to live call tab
         navigate('/?tab=1');
         enqueueSnackbar('Placing call...', { variant: 'info' });
-      } else if (callState.direction === 'inbound' && callState.state === 'answered') {
+      } else if (callState.direction === 'inbound' && callState.state === 'active') {
         // Just navigate to live call tab
         navigate('/?tab=1');
       }
 
-      // Refresh active calls list after a short delay to allow webhook to create the call
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['calls', 'active'] });
-      }, 1000);
+      // Don't invalidate queries here - let WebSocket handle updates
     } catch (error) {
       console.error('Failed to sync call with backend:', error);
       enqueueSnackbar('Failed to sync call with system', { variant: 'error' });
     }
   }, [navigate, queryClient, enqueueSnackbar]);
 
+  const handleCallState = useCallback(async (data: any) => {
+    console.log('WebPhone call state event:', data);
+    
+    // Don't invalidate queries here - let WebSocket messages handle updates
+    // This prevents duplicate API calls
+  }, [queryClient]);
+
   const handleCallEnded = useCallback(async (data: any) => {
     try {
       // The call-state webhook will handle marking the call as ended
-      // We just need to refresh the UI
-      
-      // Refresh calls list
-      queryClient.invalidateQueries({ queryKey: ['calls'] });
-      queryClient.invalidateQueries({ queryKey: ['calls', 'active'] });
+      // Don't invalidate queries - let WebSocket handle updates
       
       enqueueSnackbar('Call ended', { variant: 'info' });
     } catch (error) {
@@ -52,14 +52,16 @@ export const useWebPhoneSync = () => {
   useEffect(() => {
     // Set up event listeners
     signalWireService.on('call.started', syncCallWithBackend);
+    signalWireService.on('call.state', handleCallState);
     signalWireService.on('call.ended', handleCallEnded);
 
     // Clean up listeners
     return () => {
       signalWireService.off('call.started', syncCallWithBackend);
+      signalWireService.off('call.state', handleCallState);
       signalWireService.off('call.ended', handleCallEnded);
     };
-  }, [syncCallWithBackend, handleCallEnded]);
+  }, [syncCallWithBackend, handleCallState, handleCallEnded]);
 };
 
 export default useWebPhoneSync;

@@ -28,6 +28,8 @@ export interface Transcription {
   text: string;
   confidence?: number;
   timestamp: string;
+  sentiment?: 'positive' | 'neutral' | 'negative';
+  sentiment_score?: number;
 }
 
 export interface Document {

@@ -20,14 +20,14 @@ import { Call } from '../../types';
 
 interface CallInfoProps {
   call: Call;
-  onEndCall?: () => void;
-  isEnding?: boolean;
+  agentUsername?: string;
+  onCloseCall?: () => void;
 }
 
 export const CallInfo: React.FC<CallInfoProps> = ({
   call,
-  onEndCall,
-  isEnding = false,
+  agentUsername,
+  onCloseCall,
 }) => {
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -81,9 +81,9 @@ export const CallInfo: React.FC<CallInfoProps> = ({
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Person fontSize="small" color="action" />
           <Typography variant="body2" color="text.secondary">
-            Agent ID:
+            Agent:
           </Typography>
-          <Typography variant="body2">{call.agent_id || 'N/A'}</Typography>
+          <Typography variant="body2">{agentUsername || call.agent_id || 'N/A'}</Typography>
         </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -141,17 +141,17 @@ export const CallInfo: React.FC<CallInfoProps> = ({
         )}
       </Stack>
 
-      {call.status === 'active' && onEndCall && (
+      {/* Show Close Call button - disabled while call is active */}
+      {onCloseCall && (
         <Button
           variant="contained"
-          color="error"
-          startIcon={isEnding ? <CircularProgress size={20} /> : <Stop />}
-          onClick={onEndCall}
-          disabled={isEnding}
+          color="primary"
+          onClick={onCloseCall}
+          disabled={call.status === 'active'}
           fullWidth
           sx={{ mt: 3 }}
         >
-          {isEnding ? 'Ending Call...' : 'End Call'}
+          Close Call
         </Button>
       )}
     </Paper>

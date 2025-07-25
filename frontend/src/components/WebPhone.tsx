@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -40,40 +40,122 @@ export const WebPhone: React.FC = () => {
   const [showDialpad, setShowDialpad] = useState(false);
   const [incomingCall, setIncomingCall] = useState<CallState | null>(null);
   const [isCallInProgress, setIsCallInProgress] = useState(false);
+  const initRef = useRef(false);
+
+  // Define event handlers
+  const handleCallReceived = useCallback((call: CallState) => {
+    setIncomingCall(call);
+    enqueueSnackbar(`Incoming call from ${call.phoneNumber}`, { variant: 'info' });
+  }, [enqueueSnackbar]);
+
+  const handleCallStarted = useCallback((call: CallState) => {
+    setCurrentCall(call);
+    setIncomingCall(null);
+    setIsCallInProgress(true);
+  }, []);
+
+  const handleCallState = useCallback((data: any) => {
+    console.log('Call state event received:', data);
+    
+    setCurrentCall(prev => {
+      if (!prev) return null;
+      // Ensure state is a valid CallState state value
+      const validStates = ['new', 'requesting', 'trying', 'active', 'hangup', 'destroy'] as const;
+      const newState = validStates.includes(data.state) ? data.state : prev.state;
+      return { ...prev, state: newState };
+    });
+    
+    if (data.state === 'active') {
+      setCurrentCall(prev => prev ? { ...prev, startTime: new Date() } : null);
+      setIsCallInProgress(false); // Call is now connected, not "in progress"
+      enqueueSnackbar('Call connected', { variant: 'success' });
+    } else if (data.state === 'trying') {
+      // Call is being setup
+      enqueueSnackbar('Connecting call...', { variant: 'info' });
+    } else if (data.state === 'hangup') {
+      // Call is ending
+      console.log('Call state is hangup - call will be destroyed soon');
+    }
+  }, [enqueueSnackbar]);
+
+  const handleCallEnded = useCallback(() => {
+    console.log('WebPhone: call.ended event received - RESETTING TO IDLE STATE');
+    setCurrentCall(null);
+    setIncomingCall(null);  // Also clear incoming call
+    setCallDuration(0);
+    setIsCallInProgress(false);
+    setPhoneNumber('');  // Clear the phone number field
+    enqueueSnackbar('Call ended', { variant: 'info' });
+    console.log('WebPhone: Reset complete - should be in idle state now');
+  }, [enqueueSnackbar]);
+
+  const handleCallMuted = useCallback((data: any) => {
+    setCurrentCall(prev => {
+      if (!prev) return null;
+      return { ...prev, muted: data.muted };
+    });
+  }, []);
+
+  const handleCallHold = useCallback((data: any) => {
+    setCurrentCall(prev => {
+      if (!prev) return null;
+      return { ...prev, onHold: data.onHold };
+    });
+  }, []);
+
+  const setupEventHandlers = useCallback(() => {
+    console.log('Setting up WebPhone event handlers');
+    
+    // Remove any existing handlers first to prevent duplicates
+    signalWireService.off('call.received', handleCallReceived);
+    signalWireService.off('call.started', handleCallStarted);
+    signalWireService.off('call.state', handleCallState);
+    signalWireService.off('call.ended', handleCallEnded);
+    signalWireService.off('call.muted', handleCallMuted);
+    signalWireService.off('call.hold', handleCallHold);
+    
+    // Add the handlers
+    signalWireService.on('call.received', handleCallReceived);
+    signalWireService.on('call.started', handleCallStarted);
+    signalWireService.on('call.state', handleCallState);
+    signalWireService.on('call.ended', handleCallEnded);
+    signalWireService.on('call.muted', handleCallMuted);
+    signalWireService.on('call.hold', handleCallHold);
+  }, [handleCallReceived, handleCallStarted, handleCallState, handleCallEnded, handleCallMuted, handleCallHold]);
 
   // Initialize WebPhone when component mounts and user is authenticated
   useEffect(() => {
-    console.log('WebPhone useEffect - user:', !!user, 'isInitialized:', isInitialized, 'isInitializing:', isInitializing);
+    if (!user || initRef.current) return;
     
-    // Wait a bit for SignalWire SDK to load
-    const checkAndInitialize = async () => {
-      // Check if SignalWire SDK is loaded
-      if (typeof SignalWire === 'undefined') {
-        console.log('SignalWire SDK not loaded yet, waiting...');
-        setTimeout(checkAndInitialize, 500);
-        return;
+    // Mark as initialized to prevent double init
+    initRef.current = true;
+    
+    // Simple ready function like client.js
+    const ready = (callback: () => void) => {
+      if (document.readyState != 'loading') {
+        callback();
+      } else {
+        document.addEventListener('DOMContentLoaded', callback);
       }
-      
-      console.log('SignalWire SDK is loaded');
-      
-      // Check if SignalWire service is already initialized
-      if (signalWireService.isInitialized) {
-        console.log('SignalWire service already initialized');
-        setIsInitialized(true);
-        setupEventHandlers();
-      } else if (user && !isInitializing) {
-        console.log('Initializing WebPhone...');
+    };
+    
+    ready(() => {
+      console.log('WebPhone ready');
+      if (!signalWireService.isInitialized && !isInitializing) {
         initializeWebPhone();
       }
-    };
-    
-    checkAndInitialize();
+    });
 
     return () => {
-      // Don't disconnect on component unmount - keep connection alive
-      // signalWireService.disconnect();
+      // Clean up event handlers on unmount
+      signalWireService.off('call.received', handleCallReceived);
+      signalWireService.off('call.started', handleCallStarted);
+      signalWireService.off('call.state', handleCallState);
+      signalWireService.off('call.ended', handleCallEnded);
+      signalWireService.off('call.muted', handleCallMuted);
+      signalWireService.off('call.hold', handleCallHold);
     };
-  }, [user]); // Simplified dependencies to avoid loops
+  }, [user, handleCallReceived, handleCallStarted, handleCallState, handleCallEnded, handleCallMuted, handleCallHold]);
 
   const initializeWebPhone = async () => {
     console.log('initializeWebPhone called');
@@ -85,107 +167,38 @@ export const WebPhone: React.FC = () => {
       setIsInitialized(true);
       setupEventHandlers();
       enqueueSnackbar('WebPhone initialized successfully', { variant: 'success' });
-    } catch (error) {
-      enqueueSnackbar('Failed to initialize WebPhone', { variant: 'error' });
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Unknown error occurred';
       console.error('WebPhone initialization error:', error);
+      
+      // Show more specific error messages
+      if (errorMessage.includes('SignalWire SDK not loaded')) {
+        enqueueSnackbar('SignalWire SDK failed to load', { variant: 'error' });
+      } else if (errorMessage.includes('token')) {
+        enqueueSnackbar('Authentication failed - invalid token', { variant: 'error' });
+      } else if (errorMessage.includes('online')) {
+        enqueueSnackbar('Failed to connect to SignalWire service', { variant: 'error' });
+      } else {
+        enqueueSnackbar(`WebPhone initialization failed: ${errorMessage}`, { variant: 'error' });
+      }
+      
       setIsInitialized(false);
     } finally {
       setIsInitializing(false);
     }
   };
 
-  const setupEventHandlers = () => {
-    signalWireService.on('call.received', (call: CallState) => {
-      setIncomingCall(call);
-      enqueueSnackbar(`Incoming call from ${call.phoneNumber}`, { variant: 'info' });
-    });
-
-    signalWireService.on('call.started', (call: CallState) => {
-      setCurrentCall(call);
-      setIncomingCall(null);
-      setIsCallInProgress(true);
-      
-      // After a delay, check if we're still in 'trying' state and update to 'ringing'
-      setTimeout(() => {
-        setCurrentCall(prev => {
-          if (prev && prev.state === 'trying') {
-            return { ...prev, state: 'ringing' };
-          }
-          return prev;
-        });
-      }, 2000);
-      
-      // After another delay, if still not answered, assume answered when transcriptions start
-      setTimeout(() => {
-        setCurrentCall(prev => {
-          if (prev && (prev.state === 'trying' || prev.state === 'ringing')) {
-            return { ...prev, state: 'answered', startTime: new Date() };
-          }
-          return prev;
-        });
-      }, 5000);
-    });
-
-    signalWireService.on('call.state', (data: any) => {
-      console.log('Call state event received:', data);
-      setCurrentCall(prev => prev ? { ...prev, state: data.state } : null);
-      
-      if (data.state === 'answered') {
-        setCurrentCall(prev => prev ? { ...prev, startTime: new Date() } : null);
-        setIsCallInProgress(false); // Call is now connected, not "in progress"
-      } else if (data.state === 'ringing') {
-        // Call is ringing on the other end
-        enqueueSnackbar('Call is ringing...', { variant: 'info' });
-      }
-    });
-
-    signalWireService.on('call.ended', () => {
-      setCurrentCall(null);
-      setCallDuration(0);
-      setIsCallInProgress(false);
-      enqueueSnackbar('Call ended', { variant: 'info' });
-    });
-
-    signalWireService.on('call.muted', (data: any) => {
-      setCurrentCall(prev => prev ? { ...prev, muted: data.muted } : null);
-    });
-
-    signalWireService.on('call.hold', (data: any) => {
-      setCurrentCall(prev => prev ? { ...prev, onHold: data.onHold } : null);
-    });
-  };
-
-  // Update call duration timer and check call state
+  // Update call duration timer only
   useEffect(() => {
-    if (currentCall) {
-      // Check if the actual SignalWire call object has a state we can read
-      const checkCallState = () => {
-        const actualCall = signalWireService.getCurrentCall();
-        if (actualCall && actualCall.state) {
-          console.log('Actual call state from SDK:', actualCall.state);
-          if (actualCall.state !== currentCall.state) {
-            setCurrentCall(prev => prev ? { ...prev, state: actualCall.state } : null);
-          }
-        }
-      };
-      
-      // Check state immediately and then periodically
-      checkCallState();
-      const stateInterval = setInterval(checkCallState, 1000);
-      
-      if (currentCall.startTime && currentCall.state === 'answered') {
-        const durationInterval = setInterval(() => {
-          const duration = Math.floor((Date.now() - currentCall.startTime!.getTime()) / 1000);
-          setCallDuration(duration);
-        }, 1000);
+    if (currentCall && currentCall.startTime && currentCall.state === 'active') {
+      const durationInterval = setInterval(() => {
+        const duration = Math.floor((Date.now() - currentCall.startTime!.getTime()) / 1000);
+        setCallDuration(duration);
+      }, 1000);
 
-        return () => {
-          clearInterval(stateInterval);
-          clearInterval(durationInterval);
-        };
-      }
-      
-      return () => clearInterval(stateInterval);
+      return () => {
+        clearInterval(durationInterval);
+      };
     }
   }, [currentCall]);
 
@@ -202,9 +215,12 @@ export const WebPhone: React.FC = () => {
 
     setIsCallInProgress(true);
     try {
+      console.log('WebPhone: Calling makeCall...');
       await signalWireService.makeCall(phoneNumber);
+      console.log('WebPhone: makeCall completed successfully');
     } catch (error) {
-      enqueueSnackbar('Failed to make call', { variant: 'error' });
+      console.error('WebPhone: makeCall failed:', error);
+      enqueueSnackbar(`Failed to make call: ${error instanceof Error ? error.message : 'Unknown error'}`, { variant: 'error' });
       setIsCallInProgress(false);
     }
   };
@@ -273,13 +289,14 @@ export const WebPhone: React.FC = () => {
 
   const getCallStateColor = (state: string) => {
     switch (state) {
+      case 'new':
+      case 'requesting':
       case 'trying':
-      case 'ringing':
         return 'warning';
-      case 'answered':
+      case 'active':
         return 'success';
-      case 'ending':
-      case 'ended':
+      case 'hangup':
+      case 'destroy':
         return 'error';
       default:
         return 'default';
@@ -324,9 +341,36 @@ export const WebPhone: React.FC = () => {
   return (
     <>
       <Paper elevation={2} sx={{ p: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          WebPhone
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">
+            WebPhone
+          </Typography>
+          {!isInitialized && (
+            <>
+              <Chip 
+                label={isInitializing ? "Initializing..." : "Not Connected"} 
+                size="small" 
+                color={isInitializing ? "warning" : "error"}
+              />
+              {!isInitializing && (
+                <Button 
+                  size="small" 
+                  onClick={initializeWebPhone}
+                  sx={{ ml: 1 }}
+                >
+                  Retry
+                </Button>
+              )}
+            </>
+          )}
+          {isInitialized && (
+            <Chip 
+              label="Connected" 
+              size="small" 
+              color="success"
+            />
+          )}
+        </Box>
 
         {/* Call Status */}
         {currentCall && (
@@ -344,7 +388,7 @@ export const WebPhone: React.FC = () => {
             <Typography variant="h6">
               {currentCall.phoneNumber}
             </Typography>
-            {currentCall.state === 'answered' && (
+            {currentCall.state === 'active' && (
               <Typography variant="body2" color="text.secondary">
                 {formatDuration(callDuration)}
               </Typography>
@@ -391,9 +435,9 @@ export const WebPhone: React.FC = () => {
                 size="large"
                 startIcon={<Phone />}
                 onClick={handleMakeCall}
-                disabled={!phoneNumber.trim() || isCallInProgress || !isInitialized}
+                disabled={!phoneNumber.trim() || isCallInProgress || (!isInitialized && !isInitializing)}
               >
-                {isCallInProgress ? 'Calling...' : 'Call'}
+                {isCallInProgress ? 'Calling...' : isInitializing ? 'Initializing...' : 'Call'}
               </Button>
             </Grid>
           ) : (

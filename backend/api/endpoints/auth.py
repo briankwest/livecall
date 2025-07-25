@@ -142,9 +142,6 @@ async def logout(current_user: User = Depends(get_current_user)):
 
 class SignalWireToken(BaseModel):
     token: str
-    project_id: str
-    space_url: str
-    from_number: str
 
 
 @router.post("/signalwire-token", response_model=SignalWireToken)
@@ -169,15 +166,23 @@ async def get_signalwire_token(current_user: User = Depends(get_current_user)):
         }
         
         # Request subscriber token from SignalWire Call Fabric API
-        logger.info(f"Requesting SignalWire token for reference: {current_user.username}")
+        # Log the request details
+        reference = current_user.username
+        request_url = f"https://{settings.signalwire_space_url}/api/fabric/subscribers/tokens"
+        request_body = {"reference": reference}
+        
+        logger.info(f"Requesting SignalWire token:")
+        logger.info(f"  URL: {request_url}")
+        logger.info(f"  Reference: {reference}")
+        logger.info(f"  Current user: {current_user.username}")
+        logger.info(f"  Space URL: {settings.signalwire_space_url}")
+        logger.info(f"  Project ID: {settings.signalwire_project_id}")
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"https://{settings.signalwire_space_url}/api/fabric/subscribers/tokens",
+                request_url,
                 headers=headers,
-                json={
-                    "reference": current_user.username
-                }
+                json=request_body
             )
             
             if response.status_code != 200:
@@ -196,12 +201,15 @@ async def get_signalwire_token(current_user: User = Depends(get_current_user)):
                 logger.error(f"No token in SignalWire response: {token_data}")
                 raise ValueError("No token in response")
             
-            return SignalWireToken(
-                token=token_value,
-                project_id=settings.signalwire_project_id,
-                space_url=settings.signalwire_space_url,
-                from_number=settings.signalwire_from_number or ""
-            )
+            # Log token details
+            logger.info(f"Token value: {token_value[:50]}..." if len(token_value) > 50 else f"Token value: {token_value}")
+            logger.info(f"Token type: {type(token_value)}")
+            logger.info(f"Token length: {len(token_value)}")
+            
+            result = SignalWireToken(token=token_value)
+            logger.info(f"Returning: {result.dict()}")
+            
+            return result
             
     except Exception as e:
         raise HTTPException(
