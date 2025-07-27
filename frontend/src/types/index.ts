@@ -38,7 +38,7 @@ export interface Document {
   content: string;
   similarity?: number;
   category?: string;
-  metadata?: Record<string, any>;
+  meta_data?: Record<string, any>;
 }
 
 export interface AISuggestion {

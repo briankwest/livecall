@@ -16,7 +16,7 @@ class CallProcessor:
         self.openai_service = OpenAIService()
         self.vector_service = VectorSearchService()
         self.context_window_minutes = 2
-        self.min_transcriptions_for_search = 3
+        self.min_transcriptions_for_search = 2  # Start searching after just 2 transcriptions
         
     async def process_transcription(
         self,
@@ -56,7 +56,7 @@ class CallProcessor:
                 search_query,
                 db,
                 limit=5,
-                similarity_threshold=0.7
+                similarity_threshold=0.5  # Lower threshold to be more inclusive
             )
             
             if documents:

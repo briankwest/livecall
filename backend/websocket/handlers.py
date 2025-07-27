@@ -96,5 +96,49 @@ async def handle_client_message(
             websocket
         )
         
+    elif event == "conversation:summary":
+        # Generate conversation summary every 5 transcriptions
+        from services.openai import OpenAIService
+        from models import Call, Transcription
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        
+        requested_call_id = event_data.get("call_id")
+        count = event_data.get("count", 0)
+        
+        if requested_call_id:
+            # Get recent transcriptions for the call
+            result = await db.execute(
+                select(Transcription)
+                .where(Transcription.call_id == requested_call_id)
+                .order_by(Transcription.timestamp.desc())
+                .limit(10)  # Get last 10 transcriptions for context
+            )
+            recent_transcriptions = result.scalars().all()
+            
+            if recent_transcriptions:
+                # Format transcriptions for summary
+                conversation_text = "\n".join([
+                    f"{t.speaker.capitalize()}: {t.text}"
+                    for t in reversed(recent_transcriptions)  # Reverse to get chronological order
+                ])
+                
+                # Generate summary using GPT-4o-mini
+                openai_service = OpenAIService()
+                summary = await openai_service.generate_conversation_summary(conversation_text)
+                
+                # Send summary back to client
+                await websocket_manager.send_personal_message(
+                    {
+                        "event": "conversation:summary",
+                        "data": {
+                            "call_id": requested_call_id,
+                            "summary": summary,
+                            "count": count
+                        }
+                    },
+                    websocket
+                )
+        
     else:
         logger.warning(f"Unknown WebSocket event: {event}")

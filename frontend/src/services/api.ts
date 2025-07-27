@@ -132,11 +132,16 @@ export const documentsService = {
     return response.data;
   },
   
-  searchDocuments: async (query: string, category?: string, limit = 5): Promise<Document[]> => {
-    const response = await api.post<Document[]>('/api/documents/search', {
-      query,
-      category,
-      limit,
+  searchDocuments: async (params: { query: string; category?: string; limit?: number }): Promise<Document[]> => {
+    const response = await api.post<Document[]>('/api/documents/search', params);
+    return response.data;
+  },
+  
+  uploadDocument: async (formData: FormData): Promise<{ status: string; document_id: string }> => {
+    const response = await api.post('/api/documents/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
     });
     return response.data;
   },

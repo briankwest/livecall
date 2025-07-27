@@ -133,7 +133,7 @@ async def list_documents(
             title=doc.title,
             content=doc.content[:200] + "..." if len(doc.content) > 200 else doc.content,
             category=doc.category,
-            metadata=doc.meta_data or {}
+            meta_data=doc.meta_data or {}
         )
         for doc in documents
     ]
@@ -162,7 +162,7 @@ async def get_document(
         title=doc.title,
         content=doc.content,
         category=doc.category,
-        metadata=doc.meta_data or {}
+        meta_data=doc.meta_data or {}
     )
 
 
@@ -190,7 +190,7 @@ async def search_documents(
             content=r["content"][:200] + "..." if len(r["content"]) > 200 else r["content"],
             similarity=r["similarity"],
             category=r["category"],
-            metadata=r["meta_data"] or {}
+            meta_data=r["meta_data"] or {}
         )
         for r in results
     ]

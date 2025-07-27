@@ -24,6 +24,7 @@ import {
   ListItemText,
   Divider,
   CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import { Visibility, Assessment } from '@mui/icons-material';
 import { useQuery } from '@tanstack/react-query';
@@ -111,7 +112,7 @@ export const CallHistory: React.FC = () => {
         </Typography>
       </Box>
 
-      <Paper elevation={2}>
+      <Paper elevation={2} sx={{ width: '100%', overflow: 'hidden' }}>
         <Box sx={{ p: 2 }}>
           <TextField
             select
@@ -129,18 +130,18 @@ export const CallHistory: React.FC = () => {
         </Box>
 
         <TableContainer>
-          <Table>
+          <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Phone Number</TableCell>
+                <TableCell>Phone</TableCell>
                 <TableCell>Direction</TableCell>
                 <TableCell>Agent</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell>Start Time</TableCell>
+                <TableCell>Time</TableCell>
                 <TableCell>Duration</TableCell>
                 <TableCell>Mode</TableCell>
-                <TableCell align="center">Transcriptions</TableCell>
-                <TableCell align="center">Documents</TableCell>
+                <TableCell align="center">Trans.</TableCell>
+                <TableCell align="center">Docs</TableCell>
                 <TableCell align="center">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -160,16 +161,21 @@ export const CallHistory: React.FC = () => {
               ) : (
                 calls.map((call) => (
                   <TableRow key={call.id} hover>
-                    <TableCell>{call.phone_number || 'Unknown'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{call.phone_number || 'Unknown'}</TableCell>
                     <TableCell>
                       <Chip
-                        label={call.direction}
+                        label={call.direction === 'outbound' ? 'OUT' : 'IN'}
                         size="small"
                         variant="outlined"
                         color={call.direction === 'outbound' ? 'primary' : 'secondary'}
+                        sx={{ minWidth: '45px' }}
                       />
                     </TableCell>
-                    <TableCell>{call.agent_id || '-'}</TableCell>
+                    <TableCell sx={{ maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <Tooltip title={call.agent_id || 'No agent'}>
+                        <span>{call.agent_id || '-'}</span>
+                      </Tooltip>
+                    </TableCell>
                     <TableCell>
                       <Chip
                         label={call.status}
@@ -177,7 +183,7 @@ export const CallHistory: React.FC = () => {
                         color={getStatusColor(call.status)}
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
                       {format(new Date(call.start_time), 'MMM d, HH:mm')}
                     </TableCell>
                     <TableCell>{formatDuration(call.duration_seconds)}</TableCell>
@@ -196,11 +202,11 @@ export const CallHistory: React.FC = () => {
                     </TableCell>
                     <TableCell align="center">
                       <Button
-                        variant="contained"
+                        variant="outlined"
                         size="small"
                         onClick={() => handleViewCall(call)}
                       >
-                        {call.status === 'active' ? 'View Live' : 'View'}
+                        {call.status === 'active' ? 'Live' : 'View'}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -262,6 +268,18 @@ export const CallHistory: React.FC = () => {
                           <Typography variant="caption" color="text.secondary">
                             {format(new Date(transcript.timestamp), 'HH:mm:ss')}
                           </Typography>
+                          {transcript.sentiment && transcript.sentiment !== 'neutral' && (
+                            <Typography 
+                              component="span" 
+                              sx={{ 
+                                fontSize: '1.2rem',
+                                ml: 1
+                              }}
+                            >
+                              {transcript.sentiment === 'positive' ? '😊' : 
+                               transcript.sentiment === 'negative' ? '😞' : '😐'}
+                            </Typography>
+                          )}
                         </Box>
                       }
                       secondary={

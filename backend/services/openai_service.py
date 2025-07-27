@@ -38,16 +38,19 @@ class OpenAIService:
         if not conversation:
             return "", []
         
-        prompt = f"""Analyze this customer service conversation and extract:
-1. A brief summary of what the customer needs help with (1-2 sentences)
-2. Key topics or entities mentioned (up to 5)
+        prompt = f"""Analyze this customer service conversation and extract information that would be useful for searching documentation:
+
+1. What is the customer's main issue or question? (Be specific)
+2. What product features, services, or processes are being discussed?
+3. Are there any error messages, specific problems, or technical terms mentioned?
+4. What action is the customer trying to perform?
 
 Conversation:
 {conversation}
 
 Response format:
-Summary: <summary>
-Topics: <topic1>, <topic2>, <topic3>
+Summary: <specific description of the customer's issue>
+Topics: <relevant search terms, product names, features, error messages, etc>
 """
         
         try:
@@ -90,12 +93,18 @@ Topics: <topic1>, <topic2>, <topic3>
         if not conversation_summary and not key_topics:
             return ""
             
-        prompt = f"""Based on this customer service context, generate a search query to find relevant documentation:
+        prompt = f"""You are searching a knowledge base to help a customer service agent. Based on this context, generate the BEST search query to find relevant documentation.
 
-Summary: {conversation_summary}
+Customer Issue: {conversation_summary}
 Key Topics: {', '.join(key_topics)}
 
-Generate a concise search query (max 100 words) that would help find relevant help documentation:"""
+Generate a search query that would match relevant help articles, policies, or troubleshooting guides. Focus on:
+- The specific problem or question
+- Product/feature names
+- Error messages or symptoms
+- Actions the customer is trying to perform
+
+Search query (be specific but concise):"""
         
         try:
             response = await self.client.chat.completions.create(
@@ -215,3 +224,38 @@ Sentiment: <sentiment>
             lines.append(f"{speaker.capitalize()}: {text}")
             
         return "\n".join(lines)
+            
+    async def generate_conversation_summary(self, conversation_text: str) -> str:
+        """Generate a brief summary of the conversation using GPT-4o-mini"""
+        
+        if not conversation_text:
+            return "No conversation to summarize"
+            
+        prompt = f"""Please provide a brief 2-3 sentence summary of this customer service conversation. Focus on the main issue and current status:
+
+{conversation_text}
+
+Summary:"""
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Use GPT-4o-mini for quick summaries
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that creates concise summaries of customer service conversations."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=150
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            
+            # Remove "Summary:" prefix if present
+            if summary.startswith("Summary:"):
+                summary = summary.replace("Summary:", "").strip()
+                
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error generating conversation summary: {e}")
+            return "Error generating summary"

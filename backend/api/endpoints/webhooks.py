@@ -244,16 +244,20 @@ async def swml_webhook(request: Request) -> Dict[str, Any]:
     # For outbound calls, userVariables come from the client dial command
     # For inbound calls, we need to set them in SWML
     if direction == "inbound":
-        swml_response = {
-            "version": "1.0.0",
-            "vars": {
-                "userVariables": {
+        # Add set command at the beginning for inbound calls
+        main_sections_with_set = [
+            {
+                "set": {
                     "direction": "inbound",
                     "username": username
                 }
-            },
+            }
+        ] + main_sections
+        
+        swml_response = {
+            "version": "1.0.0",
             "sections": {
-                "main": main_sections
+                "main": main_sections_with_set
             }
         }
     else:
@@ -305,7 +309,13 @@ async def handle_transcription(
         # Get channel data for user variables (destination number, etc)
         channel_data = data.get("channel_data", {})
         swml_vars = channel_data.get("SWMLVars", {})
+        # For outbound calls, variables are under userVariables
+        # For inbound calls with set command, they're at the top level of SWMLVars
         user_vars = swml_vars.get("userVariables", {})
+        
+        # Also check top-level SWML vars (for inbound calls using set command)
+        if not user_vars:
+            user_vars = swml_vars
         
         # Log specific fields for database mapping
         logger.info("Extracted fields for database:")
@@ -356,9 +366,13 @@ async def handle_transcription(
             # Create new call record
             # Try to determine direction from user variables or default to outbound
             call_direction = user_vars.get("direction", "outbound")
+            # Get agent username from variables
+            agent_username = user_vars.get("username", "") or user_vars.get("agent_id", "")
+            
             call = Call(
                 signalwire_call_id=call_id,
                 phone_number=user_vars.get("destination_number", "Unknown"),
+                agent_id=agent_username,  # Store the agent username
                 status="active",
                 listening_mode="both",
                 direction=call_direction,
@@ -367,14 +381,24 @@ async def handle_transcription(
             db.add(call)
             await db.commit()
             await db.refresh(call)
-            logger.info(f"Created new call record: {call.id} with direction: {call_direction}")
+            logger.info(f"Created new call record: {call.id} with direction: {call_direction} and agent: {agent_username}")
         else:
-            # If call exists but direction is not set, update it from user variables
+            # If call exists but direction or agent_id is not set, update from user variables
+            updated = False
             if not call.direction or call.direction == "":
                 call_direction = user_vars.get("direction", "outbound")
                 call.direction = call_direction
+                updated = True
+            
+            if not call.agent_id or call.agent_id == "":
+                agent_username = user_vars.get("username", "") or user_vars.get("agent_id", "")
+                if agent_username:
+                    call.agent_id = agent_username
+                    updated = True
+            
+            if updated:
                 await db.commit()
-                logger.info(f"Updated existing call {call.id} with direction: {call_direction}")
+                logger.info(f"Updated existing call {call.id} with direction: {call.direction} and agent: {call.agent_id}")
         
         # Now map speaker based on call direction
         logger.info(f"Call direction from database: {call.direction}")
@@ -403,19 +427,24 @@ async def handle_transcription(
         
         logger.info(f"FINAL Speaker mapping: {speaker} -> {speaker_mapped} (call direction: {call.direction})")
         
-        # Analyze sentiment for customer messages
+        # Analyze sentiment for both customer and agent messages
         sentiment = "neutral"
         sentiment_score = 0.5
         
-        if speaker_mapped == "customer" and text.strip():
+        if text.strip():
             try:
                 # Simple sentiment analysis based on keywords for now
                 text_lower = text.lower()
                 
-                # Negative indicators
-                negative_words = ['frustrated', 'angry', 'mad', 'terrible', 'awful', 'worst', 'hate', 'stupid', 'useless', 'broken', 'not working', 'doesn\'t work']
-                # Positive indicators
-                positive_words = ['thank', 'thanks', 'great', 'excellent', 'wonderful', 'perfect', 'awesome', 'happy', 'love', 'appreciate', 'helpful']
+                # Different word lists for customer vs agent
+                if speaker_mapped == "customer":
+                    # Customer sentiment indicators
+                    negative_words = ['frustrated', 'angry', 'mad', 'terrible', 'awful', 'worst', 'hate', 'stupid', 'useless', 'broken', 'not working', 'doesn\'t work', 'unacceptable', 'ridiculous', 'disappointed']
+                    positive_words = ['thank', 'thanks', 'great', 'excellent', 'wonderful', 'perfect', 'awesome', 'happy', 'love', 'appreciate', 'helpful', 'satisfied', 'pleased']
+                else:  # agent
+                    # Agent sentiment indicators (professional language)
+                    negative_words = ['apologize', 'sorry', 'unfortunately', 'unable', 'cannot', 'issue', 'problem', 'delay', 'inconvenience', 'difficult']
+                    positive_words = ['certainly', 'absolutely', 'happy to help', 'glad', 'excellent', 'perfect', 'resolved', 'solution', 'assist', 'help you', 'my pleasure']
                 
                 negative_count = sum(1 for word in negative_words if word in text_lower)
                 positive_count = sum(1 for word in positive_words if word in text_lower)
@@ -430,7 +459,7 @@ async def handle_transcription(
                     sentiment = "neutral"
                     sentiment_score = 0.5
                     
-                logger.info(f"Sentiment analysis for customer: {sentiment} (score: {sentiment_score})")
+                logger.info(f"Sentiment analysis for {speaker_mapped}: {sentiment} (score: {sentiment_score})")
             except Exception as e:
                 logger.error(f"Error analyzing sentiment: {e}")
                 # Continue with defaults if sentiment analysis fails
@@ -532,12 +561,18 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
         # Also check channel_data for userVariables (like in transcription webhook)
         channel_data = data.get("channel_data", {})
         swml_vars = channel_data.get("SWMLVars", {})
+        # For outbound calls, variables are under userVariables
+        # For inbound calls with set command, they're at the top level of SWMLVars
         user_vars = swml_vars.get("userVariables", {})
         
-        # If direction not in params, check userVariables
+        # Also check top-level SWML vars (for inbound calls using set command)
+        if not user_vars:
+            user_vars = swml_vars
+        
+        # If direction not in params, check variables
         if not direction and user_vars:
             direction = user_vars.get("direction", "outbound")
-            logger.info(f"Got direction from userVariables: {direction}")
+            logger.info(f"Got direction from SWML vars: {direction}")
         
         logger.info("\nPARAMS FIELDS:")
         logger.info(f"  call_id: {call_id}")
@@ -632,9 +667,13 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
         if not call and call_state == "created":
             # Create new call record using WebRTC call ID as primary
             phone_number = device.get("params", {}).get("to_number") if device else "Unknown"
+            # Get agent username from variables
+            agent_username = user_vars.get("username", "") or user_vars.get("agent_id", "")
+            
             call = Call(
                 signalwire_call_id=webrtc_call_id,  # Use WebRTC call ID as primary
                 phone_number=phone_number,
+                agent_id=agent_username,  # Store the agent username
                 status="active",
                 listening_mode="both",
                 direction=direction,  # Store call direction from params
@@ -645,7 +684,7 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
             db.add(call)
             await db.commit()
             await db.refresh(call)
-            logger.info(f"Created new call record: {call.id} for call_id: {webrtc_call_id}")
+            logger.info(f"Created new call record: {call.id} for call_id: {webrtc_call_id} with agent: {agent_username}")
         
         if call:
             # Update call based on state
@@ -660,6 +699,13 @@ async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)
                 if answer_time and end_time:
                     duration = (end_time - answer_time) / 1000  # Convert to seconds
                     call.duration_seconds = int(duration)
+            
+            # Update agent_id if missing
+            if not call.agent_id or call.agent_id == "":
+                agent_username = user_vars.get("username", "") or user_vars.get("agent_id", "")
+                if agent_username:
+                    call.agent_id = agent_username
+                    logger.info(f"Updated call {call.id} with missing agent: {agent_username}")
             
             # Update raw_data with latest webhook data
             if call.raw_data:

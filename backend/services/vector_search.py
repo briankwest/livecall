@@ -64,7 +64,7 @@ class VectorSearchService:
                     "title": row.title,
                     "content": row.content,
                     "similarity": float(row.similarity),
-                    "metadata": row.meta_data,
+                    "meta_data": row.meta_data,
                     "category": row.category
                 })
                 
@@ -195,7 +195,7 @@ class VectorSearchService:
                     "title": row.title,
                     "content": row.content,
                     "similarity": float(row.similarity),
-                    "metadata": row.meta_data,
+                    "meta_data": row.meta_data,
                     "category": row.category
                 })
                 

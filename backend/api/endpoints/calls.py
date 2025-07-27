@@ -36,6 +36,8 @@ class TranscriptionResponse(BaseModel):
     text: str
     confidence: Optional[float]
     timestamp: datetime
+    sentiment: Optional[str] = "neutral"
+    sentiment_score: Optional[float] = 0.5
 
 
 class CallSummaryResponse(BaseModel):
@@ -161,7 +163,9 @@ async def get_call_transcripts(
             speaker=t.speaker,
             text=t.text,
             confidence=t.confidence,
-            timestamp=t.timestamp
+            timestamp=t.timestamp,
+            sentiment=t.sentiment,
+            sentiment_score=t.sentiment_score
         )
         for t in transcriptions
     ]

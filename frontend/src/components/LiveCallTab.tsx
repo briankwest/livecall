@@ -17,7 +17,6 @@ import { CallInfo } from './LiveCall/CallInfo';
 import { TranscriptionPanel } from './LiveCall/TranscriptionPanel';
 import { AIAssistancePanel } from './LiveCall/AIAssistancePanel';
 import { SentimentSummary } from './LiveCall/SentimentSummary';
-import { WebPhone } from './WebPhone';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useWebPhoneSync } from '../hooks/useWebPhoneSync';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,6 +42,8 @@ export const LiveCallTab: React.FC = () => {
   const [contextTopics, setContextTopics] = useState<string[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [keepCallVisible, setKeepCallVisible] = useState(false);
+  const [conversationSummary, setConversationSummary] = useState<string>('');
+  const [lastSummaryCount, setLastSummaryCount] = useState(0);
 
   // Sync WebPhone calls with backend
   useWebPhoneSync();
@@ -99,10 +100,33 @@ export const LiveCallTab: React.FC = () => {
     },
   });
 
+
+  // Check if we need to generate a summary (every 5 transcriptions)
+  useEffect(() => {
+    // Only check when we get new transcriptions (not on every render)
+    if (transcriptions.length > lastSummaryCount && transcriptions.length % 5 === 0) {
+      console.log(`Requesting summary at ${transcriptions.length} transcriptions`);
+      setLastSummaryCount(transcriptions.length);
+      
+      // Send summary request after a short delay to avoid blocking
+      setTimeout(() => {
+        if (activeCall) {
+          sendMessage('conversation:summary', { 
+            call_id: activeCall.id,
+            count: transcriptions.length 
+          });
+        }
+      }, 100);
+    }
+  }, [transcriptions.length]); // Only depend on transcriptions length
+
   // WebSocket message handler
   const handleWebSocketMessage = (message: WebSocketMessage) => {
+    console.log('WebSocket message received:', message.event);
+    
     switch (message.event) {
       case 'transcription:update':
+        console.log('Processing transcription update, current count:', transcriptions.length);
         const newTranscription: Transcription = {
           id: message.data.transcription_id,
           speaker: message.data.speaker === 'agent' ? 'agent' : 'customer',
@@ -111,7 +135,10 @@ export const LiveCallTab: React.FC = () => {
           sentiment: message.data.sentiment,
           sentiment_score: message.data.sentiment_score,
         };
-        setTranscriptions((prev) => [...prev, newTranscription]);
+        setTranscriptions((prev) => {
+          console.log('Adding transcription, new total will be:', prev.length + 1);
+          return [...prev, newTranscription];
+        });
         
         // If we receive transcriptions, the call must be active
         if (activeCall && activeCall.status !== 'active') {
@@ -124,6 +151,10 @@ export const LiveCallTab: React.FC = () => {
         setAiSuggestions(suggestion.documents);
         setContextSummary(suggestion.summary);
         setContextTopics(suggestion.topics);
+        break;
+
+      case 'conversation:summary':
+        setConversationSummary(message.data.summary);
         break;
 
       case 'call:status':
@@ -200,46 +231,25 @@ export const LiveCallTab: React.FC = () => {
   return (
     <>
       <Grid container spacing={3}>
-        {/* Left Column - WebPhone */}
-        <Grid item xs={12} md={3}>
-          <WebPhone />
-          {activeCall && (
-            <>
-              <Box sx={{ mt: 2 }}>
-                <CallInfo
-                  call={activeCall}
-                  agentUsername={user?.username}
-                  onCloseCall={() => {
-                    setActiveCall(null);
-                    setTranscriptions([]);
-                    setAiSuggestions([]);
-                    setContextSummary('');
-                    setContextTopics([]);
-                    setKeepCallVisible(false);
-                  }}
-                />
-              </Box>
-            </>
-          )}
-        </Grid>
 
-        {/* Middle and Right Columns - Call Details */}
+        {/* Call Details */}
         {activeCall ? (
           <>
-            <Grid item xs={12} md={5} sx={{ height: '600px' }}>
+            <Grid item xs={12} md={7} sx={{ height: '600px' }}>
               <TranscriptionPanel
                 transcriptions={transcriptions}
                 isLive={activeCall.status === 'active'}
               />
             </Grid>
 
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} md={5}>
               <Stack spacing={2}>
                 <SentimentSummary transcriptions={transcriptions} />
                 <AIAssistancePanel
                   suggestions={aiSuggestions}
                   summary={contextSummary}
                   topics={contextTopics}
+                  conversationSummary={conversationSummary}
                   onDocumentClick={handleDocumentClick}
                   onFeedback={handleDocumentFeedback}
                 />
@@ -247,7 +257,7 @@ export const LiveCallTab: React.FC = () => {
             </Grid>
           </>
         ) : (
-          <Grid item xs={12} md={9}>
+          <Grid item xs={12}>
             <Box sx={{ p: 4, textAlign: 'center' }}>
               <Typography variant="h5" gutterBottom>
                 No Active Call

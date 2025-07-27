@@ -25,6 +25,7 @@ interface AIAssistancePanelProps {
   suggestions: Document[];
   summary?: string;
   topics?: string[];
+  conversationSummary?: string;
   onDocumentClick: (docId: string) => void;
   onFeedback: (docId: string, helpful: boolean) => void;
 }
@@ -33,6 +34,7 @@ export const AIAssistancePanel: React.FC<AIAssistancePanelProps> = ({
   suggestions,
   summary,
   topics,
+  conversationSummary,
   onDocumentClick,
   onFeedback,
 }) => {
@@ -65,6 +67,17 @@ export const AIAssistancePanel: React.FC<AIAssistancePanelProps> = ({
       </Box>
 
       <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+        {conversationSummary && (
+          <Card sx={{ mb: 2, bgcolor: 'primary.main', color: 'primary.contrastText' }}>
+            <CardContent>
+              <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 'bold' }}>
+                Conversation Summary
+              </Typography>
+              <Typography variant="body2">{conversationSummary}</Typography>
+            </CardContent>
+          </Card>
+        )}
+
         {summary && (
           <Card sx={{ mb: 2 }}>
             <CardContent>

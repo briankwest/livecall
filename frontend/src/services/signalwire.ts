@@ -32,6 +32,8 @@ class SignalWireService {
   private isDialing: boolean = false;
   private muted: boolean = false;
   private onHold: boolean = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private isReconnecting: boolean = false;
 
   async initialize(): Promise<void> {
     try {
@@ -94,11 +96,74 @@ class SignalWireService {
         incomingCallHandlers: { all: this.handleIncomingCall.bind(this) }
       });
       
+      // Monitor connection state
+      this.setupConnectionMonitoring();
+      
       console.log('Connected to SignalWire');
+      this.emit('connection.ready', {});
     } catch (error) {
       console.error('Error connecting to SignalWire:', error);
       throw error;
     }
+  }
+
+  private setupConnectionMonitoring(): void {
+    if (!this.client) return;
+
+    // Monitor for disconnection
+    this.client.on('offline', () => {
+      console.log('SignalWire client went offline');
+      this.emit('connection.lost', {});
+      this.startReconnect();
+    });
+
+    // Monitor for errors
+    this.client.on('error', (error: any) => {
+      console.error('SignalWire client error:', error);
+      if (!this.isReconnecting) {
+        this.startReconnect();
+      }
+    });
+  }
+
+  private startReconnect(): void {
+    if (this.isReconnecting) return;
+    
+    this.isReconnecting = true;
+    console.log('Starting auto-reconnect...');
+    
+    // Clear any existing timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+    
+    // Try to reconnect after 3 seconds
+    this.reconnectTimer = setTimeout(async () => {
+      try {
+        console.log('Attempting to reconnect...');
+        
+        // If we have an active call, don't reconnect
+        if (this.currentCall) {
+          console.log('Active call in progress, skipping reconnect');
+          this.isReconnecting = false;
+          return;
+        }
+        
+        // Try to go online again
+        if (this.client) {
+          await this.client.online({
+            incomingCallHandlers: { all: this.handleIncomingCall.bind(this) }
+          });
+          console.log('Reconnected successfully');
+          this.emit('connection.restored', {});
+          this.isReconnecting = false;
+        }
+      } catch (error) {
+        console.error('Reconnect failed:', error);
+        // Try again in 5 seconds
+        this.reconnectTimer = setTimeout(() => this.startReconnect(), 5000);
+      }
+    }, 3000);
   }
 
   private async handleIncomingCall(notification: IncomingCallNotification): Promise<void> {
@@ -125,10 +190,22 @@ class SignalWireService {
 
   private extractCallerId(call: any): string {
     // Try various properties where caller ID might be stored
-    return call?.details?.caller_id_number || 
-           call?.remoteCallerNumber || 
-           call?.callerNumber || 
-           'Unknown';
+    const rawNumber = call?.details?.caller_id_number || 
+                     call?.remoteCallerNumber || 
+                     call?.callerNumber || 
+                     'Unknown';
+    
+    // Parse SIP URI if needed (e.g., "sip:+19184249378@sip.signalwire.com" -> "+19184249378")
+    return this.parseSipUri(rawNumber);
+  }
+
+  private parseSipUri(uri: string): string {
+    // If it's a SIP URI, extract the phone number
+    if (uri.startsWith('sip:')) {
+      const match = uri.match(/sip:([^@]+)@/);
+      return match ? match[1] : uri;
+    }
+    return uri;
   }
 
   async makeCall(phoneNumber: string): Promise<string> {
@@ -159,6 +236,10 @@ class SignalWireService {
     try {
       const rootElement = document.getElementById('signalwire-container');
       
+      // Get the current user from localStorage
+      const authData = localStorage.getItem('auth');
+      const username = authData ? JSON.parse(authData).user?.username : 'unknown';
+      
       const dialParams: DialParams = {
         to: '/public/call-pstn',
         audio: true,
@@ -166,7 +247,8 @@ class SignalWireService {
         userVariables: {
           destination_number: phoneNumber,
           from_number: '',
-          direction: 'outbound'
+          direction: 'outbound',
+          username: username  // Add username to userVariables
         },
         ...(rootElement && { rootElement })
       };
@@ -221,6 +303,18 @@ class SignalWireService {
       console.log('===== EMITTED call.ended - WebPhone should be idle now =====');
     });
     
+    // Handle call.left event (when remote party hangs up)
+    call.on('call.left', () => {
+      console.log('===== CALL.LEFT EVENT - REMOTE PARTY ENDED CALL =====');
+      this.handleCallEnded(call.id);
+    });
+    
+    // Handle room.left event (another way remote hangup is signaled)
+    call.on('room.left', () => {
+      console.log('===== ROOM.LEFT EVENT - REMOTE PARTY LEFT =====');
+      this.handleCallEnded(call.id);
+    });
+    
     // Handle state changes
     call.on('state', (state: string) => {
       console.log('Call state changed to:', state);
@@ -270,6 +364,16 @@ class SignalWireService {
       console.error('Call error:', error);
       // On error, also end the call
       this.handleCallEnded(call.id);
+    });
+    
+    // Listen for member.left event (when other party leaves)
+    call.on('member.left', (data: any) => {
+      console.log('===== MEMBER.LEFT EVENT =====', data);
+      // Check if it's not our own member leaving
+      if (data.member && data.member.id !== call.memberId) {
+        console.log('Remote member left - ending call');
+        this.handleCallEnded(call.id);
+      }
     });
   }
 
@@ -330,33 +434,29 @@ class SignalWireService {
     // Check if call is already destroyed (like client.js does)
     if (this.currentCall.state === 'destroy') {
       console.log('Call already destroyed, skipping hangup');
+      this.handleCallEnded(this.currentCall.id);
       return;
     }
 
     const callId = this.currentCall.id;
     
     try {
-      // Use the proper SDK method
-      if (typeof this.currentCall.leave === 'function') {
-        console.log('Calling leave on call');
-        await this.currentCall.leave();
-      } else if (typeof this.currentCall.hangup === 'function') {
-        console.log('Calling hangup on call');
+      // Use hangup() as per SDK documentation
+      console.log('Calling hangup on call');
+      if (typeof this.currentCall.hangup === 'function') {
         await this.currentCall.hangup();
       } else {
-        console.error('No leave or hangup method found on call object');
-        throw new Error('Cannot end call - no appropriate method found');
+        console.error('hangup method not found on call object');
+        throw new Error('Cannot end call - hangup method not available');
       }
       
-      // The destroy event handler will also handle cleanup
-      // But emit ended event immediately for UI responsiveness (like client.js resetUI)
-      console.log('Hangup initiated, emitting call.ended immediately');
+      // Reset UI immediately like client.js does
+      console.log('Hangup completed, resetting UI');
       this.handleCallEnded(callId);
     } catch (error) {
-      console.error('Failed to hang up call:', error);
-      // Still handle the call ended in case of error
+      console.error('Error hanging up call:', error);
+      // Still reset UI on error
       this.handleCallEnded(callId);
-      throw error;
     }
   }
 
@@ -366,6 +466,11 @@ class SignalWireService {
     }
 
     try {
+      // Log the call object to see what's available
+      console.log('Current call object:', this.currentCall);
+      console.log('Call methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(this.currentCall)));
+      
+      // Try the standard mute/unmute methods
       if (this.muted) {
         await this.currentCall.audioUnmute();
         this.muted = false;
@@ -382,6 +487,53 @@ class SignalWireService {
       return this.muted;
     } catch (error) {
       console.error('Failed to toggle mute:', error);
+      console.error('Call object:', this.currentCall);
+      
+      // If capability error, try using WebRTC directly
+      if (error instanceof Error && error.message.includes('capability')) {
+        console.log('Trying direct WebRTC mute...');
+        return this.toggleMuteViaWebRTC();
+      }
+      
+      throw error;
+    }
+  }
+
+  private async toggleMuteViaWebRTC(): Promise<boolean> {
+    try {
+      // Access the peer connection through the call
+      const peer = (this.currentCall as any).peer;
+      if (!peer) {
+        throw new Error('No peer connection available');
+      }
+      
+      // Get local streams from the peer connection
+      const senders = peer.instance?.getSenders() || [];
+      let audioToggled = false;
+      
+      senders.forEach((sender: RTCRtpSender) => {
+        if (sender.track && sender.track.kind === 'audio') {
+          sender.track.enabled = this.muted; // If currently muted, enable (unmute)
+          console.log(`Audio track ${sender.track.id} enabled: ${sender.track.enabled}`);
+          audioToggled = true;
+        }
+      });
+      
+      if (!audioToggled) {
+        throw new Error('No audio track found to mute/unmute');
+      }
+      
+      // Update mute state
+      this.muted = !this.muted;
+      
+      this.emit('call.muted', { 
+        id: this.currentCall!.id, 
+        muted: this.muted 
+      });
+      
+      return this.muted;
+    } catch (error) {
+      console.error('Failed to toggle mute via WebRTC:', error);
       throw error;
     }
   }
@@ -455,6 +607,13 @@ class SignalWireService {
   }
 
   async disconnect(): Promise<void> {
+    // Cancel any reconnect attempts
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.isReconnecting = false;
+    
     if (this.currentCall) {
       try {
         if (typeof this.currentCall.leave === 'function') {

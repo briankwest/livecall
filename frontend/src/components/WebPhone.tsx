@@ -103,6 +103,14 @@ export const WebPhone: React.FC = () => {
     });
   }, []);
 
+  const handleConnectionLost = useCallback(() => {
+    enqueueSnackbar('WebPhone connection lost. Reconnecting...', { variant: 'warning' });
+  }, [enqueueSnackbar]);
+
+  const handleConnectionRestored = useCallback(() => {
+    enqueueSnackbar('WebPhone connection restored', { variant: 'success' });
+  }, [enqueueSnackbar]);
+
   const setupEventHandlers = useCallback(() => {
     console.log('Setting up WebPhone event handlers');
     
@@ -113,6 +121,8 @@ export const WebPhone: React.FC = () => {
     signalWireService.off('call.ended', handleCallEnded);
     signalWireService.off('call.muted', handleCallMuted);
     signalWireService.off('call.hold', handleCallHold);
+    signalWireService.off('connection.lost', handleConnectionLost);
+    signalWireService.off('connection.restored', handleConnectionRestored);
     
     // Add the handlers
     signalWireService.on('call.received', handleCallReceived);
@@ -121,7 +131,9 @@ export const WebPhone: React.FC = () => {
     signalWireService.on('call.ended', handleCallEnded);
     signalWireService.on('call.muted', handleCallMuted);
     signalWireService.on('call.hold', handleCallHold);
-  }, [handleCallReceived, handleCallStarted, handleCallState, handleCallEnded, handleCallMuted, handleCallHold]);
+    signalWireService.on('connection.lost', handleConnectionLost);
+    signalWireService.on('connection.restored', handleConnectionRestored);
+  }, [handleCallReceived, handleCallStarted, handleCallState, handleCallEnded, handleCallMuted, handleCallHold, handleConnectionLost, handleConnectionRestored]);
 
   // Initialize WebPhone when component mounts and user is authenticated
   useEffect(() => {
@@ -154,8 +166,10 @@ export const WebPhone: React.FC = () => {
       signalWireService.off('call.ended', handleCallEnded);
       signalWireService.off('call.muted', handleCallMuted);
       signalWireService.off('call.hold', handleCallHold);
+      signalWireService.off('connection.lost', handleConnectionLost);
+      signalWireService.off('connection.restored', handleConnectionRestored);
     };
-  }, [user, handleCallReceived, handleCallStarted, handleCallState, handleCallEnded, handleCallMuted, handleCallHold]);
+  }, [user, handleCallReceived, handleCallStarted, handleCallState, handleCallEnded, handleCallMuted, handleCallHold, handleConnectionLost, handleConnectionRestored]);
 
   const initializeWebPhone = async () => {
     console.log('initializeWebPhone called');
