@@ -32,30 +32,48 @@ class VectorSearchService:
             query_embedding = await self.openai_service.generate_embedding(query)
             
             # Build the search query with pgvector
-            sql = text("""
-                SELECT 
-                    document_id,
-                    title,
-                    content,
-                    1 - (embedding <=> :embedding) as similarity,
-                    meta_data,
-                    category
-                FROM document_embeddings
-                WHERE 1 - (embedding <=> :embedding) > :threshold
-                    AND (:category IS NULL OR category = :category)
-                ORDER BY embedding <=> :embedding
-                LIMIT :limit
-            """)
+            if category:
+                sql = text("""
+                    SELECT 
+                        document_id,
+                        title,
+                        content,
+                        1 - (embedding <=> :embedding) as similarity,
+                        meta_data,
+                        category
+                    FROM document_embeddings
+                    WHERE 1 - (embedding <=> :embedding) > :threshold
+                        AND category = :category
+                    ORDER BY embedding <=> :embedding
+                    LIMIT :limit
+                """)
+            else:
+                sql = text("""
+                    SELECT 
+                        document_id,
+                        title,
+                        content,
+                        1 - (embedding <=> :embedding) as similarity,
+                        meta_data,
+                        category
+                    FROM document_embeddings
+                    WHERE 1 - (embedding <=> :embedding) > :threshold
+                    ORDER BY embedding <=> :embedding
+                    LIMIT :limit
+                """)
             
-            result = await db.execute(
-                sql,
-                {
-                    "embedding": query_embedding,
-                    "threshold": similarity_threshold,
-                    "category": category,
-                    "limit": limit
-                }
-            )
+            # Convert embedding to string format for pgvector
+            embedding_str = f"[{','.join(map(str, query_embedding))}]"
+            
+            params = {
+                "embedding": embedding_str,
+                "threshold": similarity_threshold,
+                "limit": limit
+            }
+            if category:
+                params["category"] = category
+                
+            result = await db.execute(sql, params)
             
             documents = []
             for row in result:

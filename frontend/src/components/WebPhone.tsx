@@ -28,6 +28,8 @@ import {
 import { useSnackbar } from 'notistack';
 import { signalWireService, CallState } from '../services/signalwire';
 import { useAuth } from '../contexts/AuthContext';
+import { callsService } from '../services/api';
+import { Call } from '../types';
 
 export const WebPhone: React.FC = () => {
   const { enqueueSnackbar } = useSnackbar();
@@ -261,6 +263,24 @@ export const WebPhone: React.FC = () => {
   const handleHangup = async () => {
     try {
       await signalWireService.hangupCall();
+      
+      // Also notify the backend to end the call
+      // This ensures the Call Information tab gets updated
+      if (currentCall) {
+        try {
+          // Get the active call from the backend
+          const activeCalls = await callsService.listCalls({ status: 'active' });
+          const backendCall = activeCalls.length > 0 ? activeCalls[0] : null;
+          
+          if (backendCall) {
+            await callsService.endCall(backendCall.id);
+            console.log('Backend call ended successfully');
+          }
+        } catch (apiError) {
+          console.error('Failed to end call in backend:', apiError);
+          // Don't show error to user as the WebPhone hangup was successful
+        }
+      }
     } catch (error) {
       enqueueSnackbar('Failed to hang up call', { variant: 'error' });
     }
@@ -456,32 +476,38 @@ export const WebPhone: React.FC = () => {
             </Grid>
           ) : (
             <>
-              <Grid item>
-                <IconButton
-                  color={currentCall.muted ? 'error' : 'default'}
-                  onClick={handleToggleMute}
-                  title={currentCall.muted ? 'Unmute' : 'Mute'}
-                >
-                  {currentCall.muted ? <MicOff /> : <Mic />}
-                </IconButton>
-              </Grid>
-              <Grid item>
-                <IconButton
-                  color={currentCall.onHold ? 'warning' : 'default'}
-                  onClick={handleToggleHold}
-                  title={currentCall.onHold ? 'Resume' : 'Hold'}
-                >
-                  {currentCall.onHold ? <PlayArrow /> : <Pause />}
-                </IconButton>
-              </Grid>
-              <Grid item>
-                <IconButton
-                  onClick={() => setShowDialpad(true)}
-                  title="Dialpad"
-                >
-                  <Dialpad />
-                </IconButton>
-              </Grid>
+              {/* Only show mute, hold, and dialpad when call is active */}
+              {currentCall.state === 'active' && (
+                <>
+                  <Grid item>
+                    <IconButton
+                      color={currentCall.muted ? 'error' : 'default'}
+                      onClick={handleToggleMute}
+                      title={currentCall.muted ? 'Unmute' : 'Mute'}
+                    >
+                      {currentCall.muted ? <MicOff /> : <Mic />}
+                    </IconButton>
+                  </Grid>
+                  <Grid item>
+                    <IconButton
+                      color={currentCall.onHold ? 'warning' : 'default'}
+                      onClick={handleToggleHold}
+                      title={currentCall.onHold ? 'Resume' : 'Hold'}
+                    >
+                      {currentCall.onHold ? <PlayArrow /> : <Pause />}
+                    </IconButton>
+                  </Grid>
+                  <Grid item>
+                    <IconButton
+                      onClick={() => setShowDialpad(true)}
+                      title="Dialpad"
+                    >
+                      <Dialpad />
+                    </IconButton>
+                  </Grid>
+                </>
+              )}
+              {/* Always show End Call button when there's a call */}
               <Grid item>
                 <Button
                   variant="contained"
@@ -489,6 +515,7 @@ export const WebPhone: React.FC = () => {
                   size="large"
                   startIcon={<PhoneDisabled />}
                   onClick={handleHangup}
+                  disabled={currentCall.state === 'hangup' || currentCall.state === 'destroy'}
                 >
                   End Call
                 </Button>

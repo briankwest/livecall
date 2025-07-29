@@ -13,6 +13,7 @@ import { callsService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { Call, WebSocketMessage } from '../types';
+import { signalWireService } from '../services/signalwire';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -61,6 +62,23 @@ export const HomePage: React.FC = () => {
       setActiveCall(null);
     }
   }, [activeCalls, keepCallVisible]);
+
+  // Listen for WebPhone call ended event
+  useEffect(() => {
+    const handleWebPhoneCallEnded = () => {
+      console.log('HomePage: WebPhone call ended, marking call as ended');
+      // Immediately mark the call as ended in the UI
+      if (activeCall && activeCall.status === 'active') {
+        setActiveCall({ ...activeCall, status: 'ended' });
+      }
+    };
+
+    signalWireService.on('call.ended', handleWebPhoneCallEnded);
+
+    return () => {
+      signalWireService.off('call.ended', handleWebPhoneCallEnded);
+    };
+  }, [activeCall]);
 
   // WebSocket message handler
   const handleWebSocketMessage = (message: WebSocketMessage) => {

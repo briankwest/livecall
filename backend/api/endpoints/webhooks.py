@@ -483,13 +483,27 @@ async def handle_transcription(
         
         # If transcription was created, process it and broadcast via WebSocket
         if result["status"] == "success":
-            # Process in background
-            call_processor = CallProcessor()
+            # Process in background - create a new session for the background task
+            from core.database import AsyncSessionLocal
+            
+            async def process_with_new_session(transcription_id: str, call_id: str):
+                async with AsyncSessionLocal() as new_db:
+                    try:
+                        call_processor = CallProcessor()
+                        await call_processor.process_transcription(
+                            transcription_id,
+                            call_id,
+                            new_db
+                        )
+                    except Exception as e:
+                        logger.error(f"Error in background transcription processing: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+            
             background_tasks.add_task(
-                call_processor.process_transcription,
+                process_with_new_session,
                 result["transcription_id"],
-                result["call_id"],
-                db
+                result["call_id"]
             )
             
             # Broadcast to WebSocket clients

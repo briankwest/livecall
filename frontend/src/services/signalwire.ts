@@ -258,6 +258,9 @@ class SignalWireService {
       // Create a call using SDK dial method
       const call = await this.client.dial(dialParams);
       console.log('client.dial() returned call:', call);
+      console.log('Call object type:', call.constructor.name);
+      console.log('Call methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(call)));
+      console.log('Call properties:', Object.keys(call));
       
       this.currentCall = call;
       this.setupCallEventHandlers(call);
@@ -466,74 +469,95 @@ class SignalWireService {
     }
 
     try {
-      // Log the call object to see what's available
-      console.log('Current call object:', this.currentCall);
-      console.log('Call methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(this.currentCall)));
+      console.log('Toggling mute state...');
+      console.log('Current mute state:', this.muted);
       
-      // Try the standard mute/unmute methods
-      if (this.muted) {
-        await this.currentCall.audioUnmute();
-        this.muted = false;
-      } else {
-        await this.currentCall.audioMute();
-        this.muted = true;
-      }
-      
-      this.emit('call.muted', { 
-        id: this.currentCall.id, 
-        muted: this.muted 
-      });
-      
-      return this.muted;
+      // Always use WebRTC browser-side approach for reliability
+      return this.toggleMuteViaWebRTC();
     } catch (error) {
       console.error('Failed to toggle mute:', error);
-      console.error('Call object:', this.currentCall);
-      
-      // If capability error, try using WebRTC directly
-      if (error instanceof Error && error.message.includes('capability')) {
-        console.log('Trying direct WebRTC mute...');
-        return this.toggleMuteViaWebRTC();
-      }
-      
       throw error;
     }
   }
 
   private async toggleMuteViaWebRTC(): Promise<boolean> {
     try {
-      // Access the peer connection through the call
-      const peer = (this.currentCall as any).peer;
-      if (!peer) {
-        throw new Error('No peer connection available');
-      }
-      
-      // Get local streams from the peer connection
-      const senders = peer.instance?.getSenders() || [];
+      const callAny = this.currentCall as any;
       let audioToggled = false;
       
-      senders.forEach((sender: RTCRtpSender) => {
-        if (sender.track && sender.track.kind === 'audio') {
-          sender.track.enabled = this.muted; // If currently muted, enable (unmute)
-          console.log(`Audio track ${sender.track.id} enabled: ${sender.track.enabled}`);
+      // First, try to find local media stream on the call object
+      const streamPaths = ['localStream', '_localStream', 'stream', '_stream'];
+      let localStream = null;
+      
+      for (const path of streamPaths) {
+        if (callAny[path] && typeof callAny[path].getAudioTracks === 'function') {
+          localStream = callAny[path];
+          break;
+        }
+      }
+      
+      if (localStream) {
+        const audioTracks = localStream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          // We want to toggle to the opposite of current mute state
+          const newMutedState = !this.muted;
+          // When muted = true, track should be disabled (enabled = false)
+          audioTracks.forEach((track: MediaStreamTrack) => {
+            track.enabled = !newMutedState;
+            console.log(`Audio track enabled: ${track.enabled} (muted: ${newMutedState})`);
+          });
           audioToggled = true;
         }
-      });
+      }
+      
+      // If no local stream found, try peer connection senders
+      if (!audioToggled) {
+        const peerPaths = ['peer', '_peer', 'pc', '_pc'];
+        let peerConnection = null;
+        
+        for (const path of peerPaths) {
+          const peer = callAny[path];
+          if (peer) {
+            // Check if it's the peer connection directly or nested
+            peerConnection = peer.instance || peer.pc || peer._pc || peer;
+            if (peerConnection && typeof peerConnection.getSenders === 'function') {
+              break;
+            }
+          }
+        }
+        
+        if (peerConnection && typeof peerConnection.getSenders === 'function') {
+          const senders = peerConnection.getSenders();
+          const newMutedState = !this.muted;
+          for (const sender of senders) {
+            if (sender.track && sender.track.kind === 'audio') {
+              sender.track.enabled = !newMutedState;
+              console.log(`Audio sender track enabled: ${sender.track.enabled} (muted: ${newMutedState})`);
+              audioToggled = true;
+            }
+          }
+        }
+      }
       
       if (!audioToggled) {
-        throw new Error('No audio track found to mute/unmute');
+        // Log debugging info
+        console.error('Could not find audio tracks. Available properties:', Object.keys(callAny));
+        throw new Error('No audio tracks found to mute/unmute');
       }
       
       // Update mute state
       this.muted = !this.muted;
       
+      // Emit mute event
       this.emit('call.muted', { 
         id: this.currentCall!.id, 
         muted: this.muted 
       });
       
+      console.log(`Mute state changed to: ${this.muted ? 'MUTED' : 'UNMUTED'}`);
       return this.muted;
     } catch (error) {
-      console.error('Failed to toggle mute via WebRTC:', error);
+      console.error('Failed to toggle mute:', error);
       throw error;
     }
   }

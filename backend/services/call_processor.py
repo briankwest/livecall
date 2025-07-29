@@ -32,9 +32,11 @@ class CallProcessor:
                 db, call_id, self.context_window_minutes
             )
             
+            logger.info(f"Processing transcription for call {call_id}: found {len(recent_transcriptions)} recent transcriptions")
+            
             # Only process if we have enough context
             if len(recent_transcriptions) < self.min_transcriptions_for_search:
-                logger.info(f"Not enough transcriptions for call {call_id} yet")
+                logger.info(f"Not enough transcriptions for call {call_id} yet (have {len(recent_transcriptions)}, need {self.min_transcriptions_for_search})")
                 return
                 
             # Analyze conversation context
@@ -52,12 +54,15 @@ class CallProcessor:
             )
             
             # Search for relevant documents
+            logger.info(f"Searching for documents with query: '{search_query}'")
             documents = await self.vector_service.search_documents(
                 search_query,
                 db,
                 limit=5,
-                similarity_threshold=0.5  # Lower threshold to be more inclusive
+                similarity_threshold=0.3  # Lower threshold to be more inclusive
             )
+            
+            logger.info(f"Found {len(documents)} relevant documents for call {call_id}")
             
             if documents:
                 # Store AI interaction
@@ -85,6 +90,7 @@ class CallProcessor:
                 await db.commit()
                 
                 # Send suggestions via WebSocket
+                logger.info(f"Broadcasting AI suggestions for call {call_id} with {len(documents)} documents")
                 await websocket_manager.broadcast_to_call(
                     call_id,
                     {
