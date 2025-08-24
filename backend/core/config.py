@@ -22,10 +22,11 @@ class Settings(BaseSettings):
     signalwire_phone_number: Optional[str] = None
     signalwire_from_number: Optional[str] = None
     
-    # OpenAI
-    openai_api_key: Optional[str] = None
-    openai_model: str = "gpt-4-turbo-preview"
-    embedding_model: str = "text-embedding-ada-002"
+    # AWS Bedrock
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
+    aws_region: str = "us-east-1"
+    bedrock_model_id: str = "amazon.nova-micro-v1:0"
     
     # Application
     environment: str = "development"

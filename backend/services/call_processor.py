@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 import logging
 from models import Call, Transcription, AIInteraction, CallSummary, CallDocumentReference
-from .openai_service import OpenAIService
+from .bedrock_service import BedrockService
 from .vector_search import VectorSearchService
 from websocket.manager import websocket_manager
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class CallProcessor:
     def __init__(self):
-        self.openai_service = OpenAIService()
+        self.bedrock_service = BedrockService()
         self.vector_service = VectorSearchService()
         self.context_window_minutes = 2
         self.min_transcriptions_for_search = 2  # Start searching after just 2 transcriptions
@@ -40,7 +40,7 @@ class CallProcessor:
                 return
                 
             # Analyze conversation context
-            summary, topics = await self.openai_service.analyze_conversation_context(
+            summary, topics = await self.bedrock_service.analyze_conversation_context(
                 recent_transcriptions
             )
             
@@ -49,7 +49,7 @@ class CallProcessor:
                 return
                 
             # Generate search query
-            search_query = await self.openai_service.generate_search_query(
+            search_query = await self.bedrock_service.generate_search_query(
                 summary, topics
             )
             
@@ -139,8 +139,8 @@ class CallProcessor:
                 for t in transcriptions
             ]
             
-            # Generate summary using OpenAI
-            summary_data = await self.openai_service.summarize_call(trans_data)
+            # Generate summary using Bedrock
+            summary_data = await self.bedrock_service.summarize_call(trans_data)
             
             # Store summary in database
             call_summary = CallSummary(

@@ -5,14 +5,14 @@ from pgvector.sqlalchemy import Vector
 import numpy as np
 import logging
 from models import DocumentEmbedding
-from .openai_service import OpenAIService
+from .embedding_service import get_embedding_service
 
 logger = logging.getLogger(__name__)
 
 
 class VectorSearchService:
     def __init__(self):
-        self.openai_service = OpenAIService()
+        self.embedding_service = None
         
     async def search_documents(
         self,
@@ -28,8 +28,16 @@ class VectorSearchService:
             return []
             
         try:
+            # Initialize embedding service if needed
+            if not self.embedding_service:
+                try:
+                    self.embedding_service = get_embedding_service()
+                except ImportError:
+                    logger.warning("Sentence transformers not available, vector search disabled")
+                    return []
+            
             # Generate embedding for query
-            query_embedding = await self.openai_service.generate_embedding(query)
+            query_embedding = self.embedding_service.generate_embedding(query)
             
             # Build the search query with pgvector
             if category:
@@ -104,8 +112,16 @@ class VectorSearchService:
         """Add document with embedding to database"""
         
         try:
+            # Initialize embedding service if needed
+            if not self.embedding_service:
+                try:
+                    self.embedding_service = get_embedding_service()
+                except ImportError:
+                    logger.warning("Sentence transformers not available, document embedding disabled")
+                    return False
+            
             # Generate embedding
-            embedding = await self.openai_service.generate_embedding(content)
+            embedding = self.embedding_service.generate_embedding(content)
             
             # Check if document already exists
             existing = await db.execute(

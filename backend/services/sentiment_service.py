@@ -6,17 +6,17 @@ from sqlalchemy import desc, select
 import json
 
 from models import Call, Transcription, SentimentHistory
-from services.openai_service import OpenAIService
+from services.bedrock_service import BedrockService
 from core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class SentimentAnalysisService:
-    """Service for analyzing call sentiment using GPT-4o-mini"""
+    """Service for analyzing call sentiment using Amazon Bedrock Nova Micro"""
     
     def __init__(self):
-        self.openai_service = OpenAIService()
+        self.bedrock_service = BedrockService()
         
     async def analyze_sentiment(self, transcriptions: List[Transcription]) -> Tuple[str, float]:
         """
@@ -33,44 +33,9 @@ class SentimentAnalysisService:
         
         conversation_text = "\n".join(conversation)
         
-        # Use GPT-4o-mini for sentiment analysis
-        system_prompt = """You are a sentiment analysis assistant. Analyze the following conversation and determine the overall sentiment.
-        
-        Classify the sentiment as one of: happy, neutral, or mad
-        
-        Consider:
-        - Tone and language used
-        - Customer satisfaction indicators
-        - Frustration or anger signals
-        - Positive or appreciative language
-        
-        Respond with a JSON object containing:
-        {
-            "sentiment": "happy" | "neutral" | "mad",
-            "confidence": 0.0-1.0,
-            "reasoning": "brief explanation"
-        }"""
-        
+        # Use Bedrock Nova Micro for sentiment analysis
         try:
-            response = await self.openai_service.get_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Analyze this conversation:\n\n{conversation_text}"}
-                ],
-                model="gpt-4o-mini",
-                temperature=0.3,
-                max_tokens=200
-            )
-            
-            # Parse response
-            result = json.loads(response)
-            sentiment = result.get("sentiment", "neutral")
-            confidence = float(result.get("confidence", 0.5))
-            
-            # Validate sentiment
-            if sentiment not in ["happy", "neutral", "mad"]:
-                sentiment = "neutral"
-                
+            sentiment, confidence = await self.bedrock_service.analyze_sentiment(conversation_text)
             logger.info(f"Sentiment analysis result: {sentiment} (confidence: {confidence})")
             return sentiment, confidence
             
