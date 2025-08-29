@@ -27,6 +27,9 @@ make test
 # Run specific test file
 docker-compose exec backend pytest path/to/test_file.py
 
+# Run specific test function
+docker-compose exec backend pytest path/to/test.py::test_function
+
 # Run tests with coverage
 docker-compose exec backend pytest --cov=backend
 
@@ -91,7 +94,7 @@ The LiveCall system is a real-time call assistance platform with the following k
 - **Real-time**: WebSocket handlers in `backend/websocket/` for live transcription and AI assistance
 - **Services**: Core business logic in `backend/services/` including:
   - `signalwire_service.py`: SignalWire telephony integration
-  - `openai_service.py`: OpenAI API integration for AI processing
+  - `openai_service.py`: OpenAI API integration for AI processing (transitioning to AWS Bedrock)
   - `vector_search.py`: Semantic search implementation
   - `call_processor.py`: Real-time call processing pipeline
   - `sentiment_service.py`: Sentiment analysis for transcriptions
@@ -130,15 +133,30 @@ The LiveCall system is a real-time call assistance platform with the following k
 - Development uses `docker-compose.dev.yml` for hot reloading
 - Frontend runs on Vite dev server (port 5173 internal, proxied through Nginx)
 - Backend auto-reloads on code changes via uvicorn --reload
-- For SignalWire integration, use ngrok for webhook forwarding (see docs/ngrok-setup.md)
 - Demo user credentials: demo@livecall.ai / demo123 (created on startup via init_demo.py)
+
+### Ngrok Setup for SignalWire Webhooks
+For local development with SignalWire webhooks:
+```bash
+# Install ngrok from https://ngrok.com/download
+# Run ngrok to expose local port 80
+ngrok http 80
+
+# Update .env with ngrok URL
+PUBLIC_URL=https://your-subdomain.ngrok-free.app
+
+# Configure SignalWire webhook URL to:
+# https://your-subdomain.ngrok-free.app/webhooks/signalwire/transcribe
+```
 
 ### Environment Setup
 1. Copy `.env.example` to `.env` and configure:
    - SignalWire credentials (PROJECT_ID, TOKEN, SPACE_URL)
-   - OpenAI API key
+   - OpenAI API key (transitioning to AWS credentials for Bedrock)
+   - AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) for Bedrock
    - Generate secure SECRET_KEY for JWT tokens
    - Set PUBLIC_URL when using ngrok or production deployment
+   - Ngrok authtoken for development
 2. External service ports (to avoid conflicts):
    - PostgreSQL: 5433 (internal: 5432)
    - Redis: 6380 (internal: 6379)
@@ -152,6 +170,6 @@ The LiveCall system is a real-time call assistance platform with the following k
 - Frontend testing: Configure in `frontend/` as needed
 
 ### Key Dependencies
-- Backend: FastAPI, SQLAlchemy, pgvector, OpenAI SDK, python-socketio
-- Frontend: React 18, Material-UI, React Query, Socket.io-client, React Router v6
-- Infrastructure: PostgreSQL with pgvector, Redis, Nginx
+- Backend: FastAPI, SQLAlchemy, pgvector, OpenAI SDK, boto3 (AWS SDK), python-socketio, black, ruff
+- Frontend: React 18, Material-UI, React Query, Socket.io-client, React Router v6, Vite
+- Infrastructure: PostgreSQL with pgvector, Redis, Nginx, Docker Compose
