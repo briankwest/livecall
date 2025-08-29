@@ -1,0 +1,43 @@
+Common Account Issues and Solutions
+
+Cannot Log In:
+- Verify email address is correct (check for typos)
+- Use "Forgot Password" link to reset password
+- Clear browser cache and cookies
+- Try a different browser or incognito mode
+- Ensure JavaScript is enabled
+
+Account Locked:
+- Too many failed login attempts locks account for 30 minutes
+- Contact support to unlock immediately
+- Security locks require identity verification
+
+Password Reset Not Working:
+- Check spam/junk folder for reset email
+- Ensure you're checking the correct email account
+- Reset link expires after 1 hour
+- Request a new reset link if expired
+
+Two-Factor Authentication Issues:
+- Verify phone number is correct
+- Check SMS delays (may take 2-3 minutes)
+- Use backup codes if phone unavailable
+- Contact support to disable 2FA temporarily
+
+Account Verification:
+- New accounts require email verification
+- Check for verification email within 10 minutes
+- Resend verification from account settings
+- Verification links expire after 24 hours
+
+Subscription Management:
+- View active subscriptions in Account Settings
+- Cancel anytime before renewal date
+- Upgrades take effect immediately
+- Downgrades take effect at next billing cycle
+
+Payment Method Updates:
+- Remove old cards before adding new ones
+- Verify billing address matches card
+- Some banks require authorization for subscriptions
+- Update payment method 3 days before renewal
