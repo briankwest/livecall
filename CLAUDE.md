@@ -4,10 +4,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+### Quick Start
+```bash
+# Initial setup (creates .env from template, directories)
+make init
+
+# Build all Docker images
+make build
+
+# Start in development mode with hot reload
+make dev
+
+# View real-time logs
+make logs
+```
+
 ### Backend Development
 ```bash
 # Run backend tests
 make test
+
+# Run specific test file
+docker-compose exec backend pytest path/to/test_file.py
+
+# Run tests with coverage
+docker-compose exec backend pytest --cov=backend
 
 # Format Python code
 docker-compose exec backend black .
@@ -21,6 +42,9 @@ make shell-db
 
 # Run database migrations
 make migrate
+
+# Create new Alembic migration
+docker-compose exec backend alembic revision --autogenerate -m "description"
 ```
 
 ### Frontend Development
@@ -108,3 +132,26 @@ The LiveCall system is a real-time call assistance platform with the following k
 - Backend auto-reloads on code changes via uvicorn --reload
 - For SignalWire integration, use ngrok for webhook forwarding (see docs/ngrok-setup.md)
 - Demo user credentials: demo@livecall.ai / demo123 (created on startup via init_demo.py)
+
+### Environment Setup
+1. Copy `.env.example` to `.env` and configure:
+   - SignalWire credentials (PROJECT_ID, TOKEN, SPACE_URL)
+   - OpenAI API key
+   - Generate secure SECRET_KEY for JWT tokens
+   - Set PUBLIC_URL when using ngrok or production deployment
+2. External service ports (to avoid conflicts):
+   - PostgreSQL: 5433 (internal: 5432)
+   - Redis: 6380 (internal: 6379)
+   - Application: 3030 (HTTP), 3443 (HTTPS)
+
+### Testing
+- Backend uses pytest with async support
+- Tests located in `backend/tests/`
+- Run all tests: `make test`
+- Run specific test: `docker-compose exec backend pytest path/to/test.py::test_function`
+- Frontend testing: Configure in `frontend/` as needed
+
+### Key Dependencies
+- Backend: FastAPI, SQLAlchemy, pgvector, OpenAI SDK, python-socketio
+- Frontend: React 18, Material-UI, React Query, Socket.io-client, React Router v6
+- Infrastructure: PostgreSQL with pgvector, Redis, Nginx

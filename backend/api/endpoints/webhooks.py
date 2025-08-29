@@ -21,6 +21,10 @@ async def signalwire_transcribe_webhook(
 ) -> Dict[str, Any]:
     """Handle SignalWire live transcription webhook"""
     
+    logger.info("=" * 80)
+    logger.info("📥 WEBHOOK: /signalwire/transcribe")
+    logger.info("=" * 80)
+    
     # Get raw body for signature verification
     body = await request.body()
     
@@ -29,24 +33,36 @@ async def signalwire_transcribe_webhook(
     signature = request.headers.get("X-SignalWire-Signature", "")
     
     if not signalwire_service.verify_webhook_signature(signature, body):
+        logger.warning("❌ Invalid webhook signature")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
     
     # Parse JSON data
     data = await request.json()
-    logger.info(f"Received transcription webhook: {data}")
+    
+    # Log the full webhook payload
+    logger.info("📋 Headers:")
+    for key, value in request.headers.items():
+        if key.lower() not in ['authorization', 'x-api-key', 'cookie', 'x-signalwire-signature']:
+            logger.info(f"  {key}: {value}")
+    
+    logger.info("📦 Body:")
+    logger.info(json.dumps(data, indent=2))
+    logger.info("-" * 80)
     
     # Handle transcription event
     result = await signalwire_service.handle_transcription_event(data, db)
     
-    # If transcription was created, process it in the background
+    # If transcription was created, process it SYNCHRONOUSLY for now
     if result["status"] == "success":
+        logger.info(f"🎯 Triggering vector search for transcription {result['transcription_id']}")
         call_processor = CallProcessor()
-        background_tasks.add_task(
-            call_processor.process_transcription,
+        # Make it synchronous to ensure it runs
+        await call_processor.process_transcription(
             result["transcription_id"],
             result["call_id"],
             db
         )
+        logger.info(f"✅ Vector search completed for transcription {result['transcription_id']}")
         
         # Broadcast transcription to WebSocket clients
         await websocket_manager.broadcast_to_call(
@@ -281,11 +297,23 @@ async def handle_transcription(
 ):
     """Handle live transcription webhooks from SignalWire"""
     
+    logger.info("=" * 80)
+    logger.info("📥 WEBHOOK: /transcription")
+    logger.info("=" * 80)
+    
     try:
         data = await request.json()
-        logger.info("="*80)
-        logger.info("TRANSCRIPTION WEBHOOK RECEIVED")
-        logger.info("="*80)
+        
+        # Log headers
+        logger.info("📋 Headers:")
+        for key, value in request.headers.items():
+            if key.lower() not in ['authorization', 'x-api-key', 'cookie']:
+                logger.info(f"  {key}: {value}")
+        
+        # Log body
+        logger.info("📦 Body:")
+        logger.info(json.dumps(data, indent=2))
+        logger.info("-" * 80)
         logger.info(f"Headers: {dict(request.headers)}")
         logger.info(f"Full payload: {json.dumps(data, indent=2)}")
         
@@ -537,8 +565,23 @@ async def handle_transcription(
 async def handle_call_state(request: Request, db: AsyncSession = Depends(get_db)):
     """Handle call state updates from SignalWire"""
     
+    logger.info("=" * 80)
+    logger.info("📥 WEBHOOK: /call-state")
+    logger.info("=" * 80)
+    
     try:
         data = await request.json()
+        
+        # Log headers
+        logger.info("📋 Headers:")
+        for key, value in request.headers.items():
+            if key.lower() not in ['authorization', 'x-api-key', 'cookie']:
+                logger.info(f"  {key}: {value}")
+        
+        # Log body
+        logger.info("📦 Body:")
+        logger.info(json.dumps(data, indent=2))
+        logger.info("-" * 80)
         logger.info("="*80)
         logger.info("CALL STATE WEBHOOK RECEIVED")
         logger.info("="*80)

@@ -15,7 +15,7 @@ class BedrockService:
             service_name='bedrock-runtime',
             region_name=settings.aws_region or 'us-east-1'
         )
-        self.model_id = "amazon.nova-micro-v1:0"
+        self.model_id = settings.bedrock_model_id or "amazon.nova-micro-v1:0"
         
     def _call_bedrock(
         self,
@@ -25,17 +25,55 @@ class BedrockService:
     ) -> Optional[str]:
         """Internal method to call Bedrock Nova Micro"""
         try:
-            response = self.client.converse(
-                modelId=self.model_id,
-                messages=messages,
-                inferenceConfig={
+            # Convert messages to prompt format
+            prompt = ""
+            for msg in messages:
+                if msg["role"] == "user":
+                    if isinstance(msg["content"], list):
+                        prompt = msg["content"][0].get("text", "")
+                    else:
+                        prompt = msg["content"]
+            
+            # Use invoke_model for Bedrock Nova
+            # Nova expects messages format
+            request_body = {
+                "messages": [{
+                    "role": "user", 
+                    "content": [{"text": prompt}]
+                }],
+                "inferenceConfig": {
                     "maxTokens": max_tokens,
                     "temperature": temperature,
                     "topP": 0.9
                 }
+            }
+            
+            response = self.client.invoke_model(
+                modelId=self.model_id,
+                body=json.dumps(request_body),
+                contentType="application/json",
+                accept="application/json"
             )
             
-            return response['output']['message']['content'][0]['text']
+            response_body = json.loads(response['body'].read())
+            
+            # Extract text from Nova response
+            if "output" in response_body:
+                output = response_body["output"]
+                if "message" in output:
+                    content = output["message"]["content"]
+                    if isinstance(content, list) and len(content) > 0:
+                        return content[0].get("text", "").strip()
+                    elif isinstance(content, str):
+                        return content.strip()
+            # Fallback for other models
+            elif "completion" in response_body:
+                return response_body["completion"].strip()
+            elif "results" in response_body:
+                return response_body["results"][0].get("outputText", "").strip()
+            else:
+                logger.warning(f"Unexpected Bedrock response format: {response_body}")
+                return None
             
         except ClientError as e:
             logger.error(f"Bedrock ClientError: {e}")

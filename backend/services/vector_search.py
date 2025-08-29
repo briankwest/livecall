@@ -32,8 +32,8 @@ class VectorSearchService:
             if not self.embedding_service:
                 try:
                     self.embedding_service = get_embedding_service()
-                except ImportError:
-                    logger.warning("Sentence transformers not available, vector search disabled")
+                except (ImportError, Exception) as e:
+                    logger.warning(f"Embedding service not available: {e}. Vector search disabled")
                     return []
             
             # Generate embedding for query

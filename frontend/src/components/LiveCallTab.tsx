@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Grid,
@@ -37,13 +37,13 @@ export const LiveCallTab: React.FC = () => {
 
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
+  const hasLoadedInitialRef = useRef(false); // Track if we've loaded initial transcriptions
   const [aiSuggestions, setAiSuggestions] = useState<Document[]>([]);
   const [contextSummary, setContextSummary] = useState<string>('');
   const [contextTopics, setContextTopics] = useState<string[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [keepCallVisible, setKeepCallVisible] = useState(false);
   const [conversationSummary, setConversationSummary] = useState<string>('');
-  const [lastSummaryCount, setLastSummaryCount] = useState(0);
 
   // Sync WebPhone calls with backend
   useWebPhoneSync();
@@ -62,17 +62,29 @@ export const LiveCallTab: React.FC = () => {
     console.log('Active calls from backend:', activeCalls);
     if (activeCalls && activeCalls.length > 0) {
       console.log('Setting active call:', activeCalls[0]);
+      // Check if this is a new call
+      if (!activeCall || activeCall.id !== activeCalls[0].id) {
+        hasLoadedInitialRef.current = false; // Reset the flag for new call
+      }
       setActiveCall(activeCalls[0]);
       setKeepCallVisible(true);
     } else if (!keepCallVisible) {
       console.log('No active calls found and not keeping visible');
-      setActiveCall(null);
-      setTranscriptions([]);
-      setAiSuggestions([]);
-      setContextSummary('');
-      setContextTopics([]);
+      // Only clear transcriptions if we don't have an active call
+      // This prevents clearing during temporary connection issues
+      if (!activeCall || activeCall.status === 'ended') {
+        console.log('[DEBUG] Clearing call data as call has ended, had', transcriptions.length, 'transcriptions');
+        setActiveCall(null);
+        setTranscriptions([]);
+        setAiSuggestions([]);
+        setContextSummary('');
+        setContextTopics([]);
+        hasLoadedInitialRef.current = false; // Reset the flag
+      } else {
+        console.log('[DEBUG] NOT clearing transcriptions - activeCall exists with status:', activeCall?.status);
+      }
     }
-  }, [activeCalls, keepCallVisible]);
+  }, [activeCalls, keepCallVisible, activeCall, transcriptions.length]);
 
   // Fetch transcriptions for active call
   const { data: initialTranscriptions } = useQuery({
@@ -82,10 +94,16 @@ export const LiveCallTab: React.FC = () => {
   });
 
   useEffect(() => {
-    if (initialTranscriptions) {
+    // Only set initial transcriptions once per call and if we don't have any yet
+    // This prevents overwriting live WebSocket transcriptions with stale backend data
+    if (initialTranscriptions && !hasLoadedInitialRef.current && transcriptions.length === 0) {
+      console.log('[DEBUG] Loading initial transcriptions from backend:', initialTranscriptions.length);
       setTranscriptions(initialTranscriptions);
+      hasLoadedInitialRef.current = true;
+    } else if (initialTranscriptions && transcriptions.length > 0) {
+      console.log('[DEBUG] Skipping initial transcriptions load - already have', transcriptions.length, 'live transcriptions');
     }
-  }, [initialTranscriptions]);
+  }, [initialTranscriptions, transcriptions.length]); // Include transcriptions.length to check current state
 
   // End call mutation
   const endCallMutation = useMutation({
@@ -101,24 +119,7 @@ export const LiveCallTab: React.FC = () => {
   });
 
 
-  // Check if we need to generate a summary (every 5 transcriptions)
-  useEffect(() => {
-    // Only check when we get new transcriptions (not on every render)
-    if (transcriptions.length > lastSummaryCount && transcriptions.length % 5 === 0) {
-      console.log(`Requesting summary at ${transcriptions.length} transcriptions`);
-      setLastSummaryCount(transcriptions.length);
-      
-      // Send summary request after a short delay to avoid blocking
-      setTimeout(() => {
-        if (activeCall) {
-          sendMessage('conversation:summary', { 
-            call_id: activeCall.id,
-            count: transcriptions.length 
-          });
-        }
-      }, 100);
-    }
-  }, [transcriptions.length]); // Only depend on transcriptions length
+  // REMOVED: Summary generation every 5 transcriptions - was blocking transcription flow
 
   // WebSocket message handler
   const handleWebSocketMessage = (message: WebSocketMessage) => {
@@ -126,7 +127,12 @@ export const LiveCallTab: React.FC = () => {
     
     switch (message.event) {
       case 'transcription:update':
-        console.log('Processing transcription update, current count:', transcriptions.length);
+        console.log('[DEBUG] Transcription update received:', {
+          id: message.data.transcription_id,
+          text: message.data.text?.substring(0, 50) + '...',
+          currentCount: transcriptions.length
+        });
+        
         const newTranscription: Transcription = {
           id: message.data.transcription_id,
           speaker: message.data.speaker === 'agent' ? 'agent' : 'customer',
@@ -135,8 +141,19 @@ export const LiveCallTab: React.FC = () => {
           sentiment: message.data.sentiment,
           sentiment_score: message.data.sentiment_score,
         };
+        
         setTranscriptions((prev) => {
-          console.log('Adding transcription, new total will be:', prev.length + 1);
+          const newCount = prev.length + 1;
+          console.log(`[DEBUG] Adding transcription #${newCount}, previous count: ${prev.length}`);
+          if (newCount === 5) {
+            console.log('[WARNING] Reached 5 transcriptions - checking for issues...');
+          }
+          if (newCount === 6) {
+            console.log('[SUCCESS] Passed 5 transcriptions - system working correctly');
+          }
+          if (newCount > 10) {
+            console.log(`[SUCCESS] ${newCount} transcriptions received and displayed`);
+          }
           return [...prev, newTranscription];
         });
         
@@ -158,22 +175,22 @@ export const LiveCallTab: React.FC = () => {
         break;
 
       case 'call:status':
-        if (message.data.status === 'ended') {
-          // Update the call status but keep it visible
-          if (activeCall) {
+        // Check if this status update is for our active call
+        if (activeCall && message.data.call_id === activeCall.id) {
+          if (message.data.status === 'ended') {
+            // Update the call status but keep it visible
             setActiveCall({ ...activeCall, status: 'ended' });
-          }
-          
-          // Only invalidate if we don't have an active call to avoid unnecessary refetches
-          if (!keepCallVisible) {
-            queryClient.invalidateQueries({ queryKey: ['calls'] });
-            queryClient.invalidateQueries({ queryKey: ['transcriptions'] });
-          }
-          
-          enqueueSnackbar('Call has ended', { variant: 'info' });
-        } else if (message.data.call_state === 'answered' || message.data.status === 'active') {
-          // Update the active call to show it's answered
-          if (activeCall) {
+            setKeepCallVisible(true); // Keep the call visible after it ends
+            
+            // Only invalidate if we don't have an active call to avoid unnecessary refetches
+            if (!keepCallVisible) {
+              queryClient.invalidateQueries({ queryKey: ['calls'] });
+              queryClient.invalidateQueries({ queryKey: ['transcriptions'] });
+            }
+            
+            enqueueSnackbar('Call has ended - Click "Close Call" to clear', { variant: 'info' });
+          } else if (message.data.call_state === 'answered' || message.data.status === 'active') {
+            // Update the active call to show it's answered
             setActiveCall({ ...activeCall, status: 'active' });
           } else {
             // Only invalidate if we don't have an active call yet
@@ -200,14 +217,25 @@ export const LiveCallTab: React.FC = () => {
   useEffect(() => {
     // Only switch to call-specific connection when we have a stable active call
     if (activeCall?.id && activeCall.status === 'active') {
-      setWsConnectionId(activeCall.id);
-    } else if (!activeCall) {
+      // Only change if it's actually different to avoid reconnections
+      if (wsConnectionId !== activeCall.id) {
+        console.log(`Switching WebSocket connection from ${wsConnectionId} to ${activeCall.id}`);
+        setWsConnectionId(activeCall.id);
+      }
+    } else if (!activeCall && wsConnectionId !== 'general') {
+      console.log(`Switching WebSocket connection from ${wsConnectionId} to general`);
       setWsConnectionId('general');
     }
-  }, [activeCall?.id, activeCall?.status]);
+  }, [activeCall?.id, activeCall?.status, wsConnectionId]);
   
   const { sendMessage } = useWebSocket(wsConnectionId, {
     onMessage: handleWebSocketMessage,
+    onConnect: () => {
+      console.log(`WebSocket connected for: ${wsConnectionId}`);
+    },
+    onDisconnect: () => {
+      console.log(`WebSocket disconnected for: ${wsConnectionId}`);
+    },
   });
 
   // Handle document click
@@ -235,7 +263,7 @@ export const LiveCallTab: React.FC = () => {
         {/* Call Details */}
         {activeCall ? (
           <>
-            <Grid item xs={12} md={7} sx={{ height: '600px' }}>
+            <Grid item xs={12} md={7} sx={{ height: { xs: '400px', md: '600px', lg: '700px' }, minHeight: '400px' }}>
               <TranscriptionPanel
                 transcriptions={transcriptions}
                 isLive={activeCall.status === 'active'}
@@ -244,6 +272,29 @@ export const LiveCallTab: React.FC = () => {
 
             <Grid item xs={12} md={5}>
               <Stack spacing={2}>
+                <CallInfo 
+                  call={activeCall}
+                  agentUsername={user?.username}
+                  onCloseCall={async () => {
+                    // If call is still active, end it first
+                    if (activeCall && activeCall.status === 'active') {
+                      try {
+                        await endCallMutation.mutateAsync(activeCall.id);
+                      } catch (error) {
+                        console.error('Failed to end call:', error);
+                      }
+                    }
+                    
+                    // Clear the UI
+                    setKeepCallVisible(false);
+                    setActiveCall(null);
+                    setTranscriptions([]);
+                    setAiSuggestions([]);
+                    setContextSummary('');
+                    setContextTopics([]);
+                    queryClient.invalidateQueries({ queryKey: ['calls'] });
+                  }}
+                />
                 <SentimentSummary transcriptions={transcriptions} />
                 <AIAssistancePanel
                   suggestions={aiSuggestions}

@@ -80,6 +80,11 @@ app.include_router(calls.router)
 app.include_router(documents.router)
 app.include_router(webhooks.router)
 
+# Test endpoints (only in development)
+if settings.environment == "development":
+    from api.endpoints import test_vector
+    app.include_router(test_vector.router)
+
 # WebSocket endpoint
 app.websocket("/ws")(websocket_endpoint)
 

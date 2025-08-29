@@ -1,42 +1,46 @@
 from typing import List, Dict, Any, Optional
 import logging
-import numpy as np
+import json
+import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
 class EmbeddingService:
-    """Embedding service using Sentence Transformers (based on SignalWire Agents approach)"""
+    """Embedding service using AWS Bedrock Titan Embeddings"""
     
-    def __init__(self, model_name: str = 'sentence-transformers/all-mpnet-base-v2'):
+    def __init__(self, model_id: str = 'amazon.titan-embed-text-v2:0'):
         """
-        Initialize embedding service with Sentence Transformers
+        Initialize embedding service with Bedrock Titan
         
         Args:
-            model_name: Name of the Sentence Transformer model to use
+            model_id: Bedrock Titan embedding model ID
+                     Options: 
+                     - amazon.titan-embed-text-v1 (1536 dimensions)
+                     - amazon.titan-embed-text-v2:0 (1024 dimensions)
         """
-        self.model_name = model_name
-        self.model = None
-        self._load_model()
+        self.model_id = model_id
+        self.client = None
+        self._dimension = None
         
-    def _load_model(self):
-        """Load the Sentence Transformer model"""
-        try:
-            from sentence_transformers import SentenceTransformer
-            self.model = SentenceTransformer(self.model_name)
-            logger.info(f"Successfully loaded embedding model: {self.model_name}")
-        except ImportError:
-            logger.error(
-                "sentence-transformers not available. Install with: "
-                "pip install sentence-transformers"
-            )
-            raise
-        except Exception as e:
-            logger.error(f"Error loading embedding model {self.model_name}: {e}")
-            raise
-            
+    def _get_client(self):
+        """Get or create Bedrock client"""
+        if self.client is None:
+            try:
+                # Use us-east-1 for Titan embeddings (verified working)
+                self.client = boto3.client(
+                    'bedrock-runtime',
+                    region_name='us-east-1'
+                )
+                logger.info(f"Initialized Bedrock client for embeddings with model: {self.model_id} in us-east-1")
+            except Exception as e:
+                logger.error(f"Failed to initialize Bedrock client: {e}")
+                raise
+        return self.client
+        
     def generate_embedding(self, text: str) -> List[float]:
         """
-        Generate embedding vector for text using Sentence Transformers
+        Generate embedding vector for text using Bedrock Titan
         
         Args:
             text: Text to embed
@@ -44,30 +48,59 @@ class EmbeddingService:
         Returns:
             List of floats representing the embedding vector
         """
-        if not self.model:
-            raise RuntimeError("Embedding model not loaded")
-            
         if not text or not text.strip():
             logger.warning("Empty text provided for embedding")
             return []
             
         try:
-            # Generate embedding
-            embedding = self.model.encode(text, show_progress_bar=False)
+            client = self._get_client()
             
-            # Convert numpy array to list
-            if hasattr(embedding, 'tolist'):
-                return embedding.tolist()
+            # Prepare request body for Titan
+            request_body = {
+                "inputText": text[:8192]  # Titan has 8192 token limit
+            }
+            
+            if 'v2' in self.model_id:
+                # v2 supports dimension configuration
+                request_body["dimensions"] = 1024  # Using 1024D for v2
+                request_body["normalize"] = True
+            # v1 doesn't support dimension configuration, always returns 1536D
+            
+            # Call Bedrock
+            response = client.invoke_model(
+                modelId=self.model_id,
+                contentType='application/json',
+                accept='application/json',
+                body=json.dumps(request_body)
+            )
+            
+            # Parse response
+            response_body = json.loads(response['body'].read())
+            
+            # Extract embedding from response
+            if 'embedding' in response_body:
+                embedding = response_body['embedding']
             else:
-                return embedding.tolist() if isinstance(embedding, np.ndarray) else list(embedding)
-                
+                raise ValueError(f"No embedding found in response: {response_body}")
+            
+            # Cache dimension
+            if self._dimension is None:
+                self._dimension = len(embedding)
+                logger.info(f"Detected embedding dimension: {self._dimension}")
+            
+            return embedding
+            
+        except ClientError as e:
+            logger.error(f"Bedrock API error generating embedding: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             raise
             
     def generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        Generate embedding vectors for multiple texts (batch processing)
+        Generate embedding vectors for multiple texts
+        Note: Titan doesn't support batch processing, so we iterate
         
         Args:
             texts: List of texts to embed
@@ -75,9 +108,6 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
-        if not self.model:
-            raise RuntimeError("Embedding model not loaded")
-            
         if not texts:
             return []
             
@@ -87,23 +117,19 @@ class EmbeddingService:
             logger.warning("No valid texts provided for embedding")
             return []
             
-        try:
-            # Generate embeddings in batch
-            embeddings = self.model.encode(valid_texts, show_progress_bar=False)
-            
-            # Convert to list of lists
-            result = []
-            for embedding in embeddings:
-                if hasattr(embedding, 'tolist'):
-                    result.append(embedding.tolist())
-                else:
-                    result.append(embedding.tolist() if isinstance(embedding, np.ndarray) else list(embedding))
-                    
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error generating batch embeddings: {e}")
-            raise
+        results = []
+        for i, text in enumerate(valid_texts):
+            try:
+                embedding = self.generate_embedding(text)
+                results.append(embedding)
+                if (i + 1) % 10 == 0:
+                    logger.info(f"Generated {i + 1}/{len(valid_texts)} embeddings")
+            except Exception as e:
+                logger.error(f"Error generating embedding for text {i}: {e}")
+                # Return empty embedding to maintain list alignment
+                results.append([])
+                
+        return results
             
     def get_embedding_dimension(self) -> int:
         """
@@ -112,19 +138,21 @@ class EmbeddingService:
         Returns:
             Integer representing the embedding dimension
         """
-        if not self.model:
-            raise RuntimeError("Embedding model not loaded")
+        if self._dimension is not None:
+            return self._dimension
             
-        # Get dimension from model
-        if hasattr(self.model, 'get_sentence_embedding_dimension'):
-            return self.model.get_sentence_embedding_dimension()
-        elif hasattr(self.model, 'encode'):
-            # Fallback: encode a dummy text to get dimension
-            dummy_embedding = self.model.encode("test", show_progress_bar=False)
-            return len(dummy_embedding)
-        else:
-            logger.warning("Cannot determine embedding dimension, defaulting to 768")
-            return 768
+        # Generate a test embedding to determine dimension
+        try:
+            test_embedding = self.generate_embedding("test")
+            self._dimension = len(test_embedding)
+            return self._dimension
+        except Exception as e:
+            logger.error(f"Error determining embedding dimension: {e}")
+            # Default dimensions based on model
+            if 'v1' in self.model_id:
+                return 1536
+            else:  # v2
+                return 1024
             
     def preprocess_text(self, text: str) -> str:
         """
@@ -146,6 +174,11 @@ class EmbeddingService:
         import re
         text = re.sub(r'\s+', ' ', text)
         
+        # Truncate to Titan's limit (approximately 8192 tokens)
+        # Using character limit as approximation
+        if len(text) > 30000:
+            text = text[:30000] + "..."
+            
         return text
         
     def calculate_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
@@ -160,45 +193,14 @@ class EmbeddingService:
             Cosine similarity score (0-1)
         """
         try:
-            import numpy as np
-            from sklearn.metrics.pairwise import cosine_similarity
-            
-            # Convert to numpy arrays
-            emb1 = np.array(embedding1).reshape(1, -1)
-            emb2 = np.array(embedding2).reshape(1, -1)
-            
-            # Calculate cosine similarity
-            similarity = cosine_similarity(emb1, emb2)[0][0]
-            return float(similarity)
-            
-        except ImportError:
-            logger.error("scikit-learn not available for similarity calculation")
-            # Fallback to manual cosine similarity
-            return self._manual_cosine_similarity(embedding1, embedding2)
-        except Exception as e:
-            logger.error(f"Error calculating similarity: {e}")
-            return 0.0
-            
-    def _manual_cosine_similarity(self, a: List[float], b: List[float]) -> float:
-        """
-        Manual cosine similarity calculation without scikit-learn
-        
-        Args:
-            a: First embedding vector
-            b: Second embedding vector
-            
-        Returns:
-            Cosine similarity score
-        """
-        try:
             import math
             
             # Calculate dot product
-            dot_product = sum(x * y for x, y in zip(a, b))
+            dot_product = sum(x * y for x, y in zip(embedding1, embedding2))
             
             # Calculate magnitudes
-            magnitude_a = math.sqrt(sum(x * x for x in a))
-            magnitude_b = math.sqrt(sum(x * x for x in b))
+            magnitude_a = math.sqrt(sum(x * x for x in embedding1))
+            magnitude_b = math.sqrt(sum(x * x for x in embedding2))
             
             # Avoid division by zero
             if magnitude_a == 0 or magnitude_b == 0:
@@ -209,15 +211,16 @@ class EmbeddingService:
             return max(0.0, min(1.0, similarity))  # Clamp to [0, 1]
             
         except Exception as e:
-            logger.error(f"Error in manual cosine similarity calculation: {e}")
+            logger.error(f"Error calculating similarity: {e}")
             return 0.0
 
-# Singleton instance - initialized lazily to avoid import errors
+# Singleton instance
 embedding_service = None
 
 def get_embedding_service():
     """Get the singleton embedding service instance"""
     global embedding_service
     if embedding_service is None:
-        embedding_service = EmbeddingService()
+        # Using Titan v2 with 1024 dimensions (available in us-east-2)
+        embedding_service = EmbeddingService(model_id='amazon.titan-embed-text-v2:0')
     return embedding_service

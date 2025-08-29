@@ -87,6 +87,21 @@ export const TranscriptionPanel: React.FC<TranscriptionPanelProps> = ({
           display: 'flex',
           flexDirection: 'column',
           gap: 2,
+          maxHeight: '100%',
+          '&::-webkit-scrollbar': {
+            width: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            backgroundColor: 'action.hover',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            backgroundColor: 'action.selected',
+            borderRadius: '4px',
+            '&:hover': {
+              backgroundColor: 'action.disabled',
+            },
+          },
         }}
       >
         {transcriptions.length === 0 ? (

@@ -396,21 +396,38 @@ class SignalWireService {
     }
 
     try {
+      console.log('Answering incoming call...');
       const rootElement = document.getElementById('signalwire-container');
       const options = rootElement ? { rootElement } : {};
       
+      // The currentCall here is the invite object from handleIncomingCall
       // Accept returns the active call session
-      const call = await this.currentCall.accept!(options);
+      if (!this.currentCall.accept) {
+        throw new Error('Accept method not available on invite object');
+      }
+      const call = await this.currentCall.accept(options);
+      console.log('Call accepted, returned call object:', call);
+      
+      // Replace the invite with the actual call session
       this.currentCall = call;
       this.setupCallEventHandlers(call);
       
-      this.emit('call.answered', {
+      // Extract caller info from the active call
+      const callerId = this.extractCallerId(call);
+      
+      this.emit('call.started', {
         id: call.id,
         direction: 'inbound',
         state: 'active',
+        phoneNumber: callerId,
+        muted: false,
+        onHold: false,
       });
+      
+      console.log('Inbound call answered successfully');
     } catch (error) {
       console.error('Failed to answer call:', error);
+      this.currentCall = null; // Clear the invite on error
       throw error;
     }
   }
@@ -421,10 +438,17 @@ class SignalWireService {
     }
 
     try {
-      await this.currentCall.reject!();
+      console.log('Rejecting incoming call...');
+      // The currentCall here is the invite object
+      if (!this.currentCall.reject) {
+        throw new Error('Reject method not available on invite object');
+      }
+      await this.currentCall.reject();
       this.currentCall = null;
+      console.log('Call rejected successfully');
     } catch (error) {
       console.error('Failed to reject call:', error);
+      this.currentCall = null; // Clear the invite on error
       throw error;
     }
   }

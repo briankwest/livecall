@@ -140,7 +140,7 @@ export const HomePage: React.FC = () => {
         {/* Left Column - WebPhone and Call Info (always visible) */}
         <Grid item xs={12} md={2.5}>
           <Stack spacing={2}>
-            <WebPhone />
+            <WebPhone onCallStart={() => setTabValue(1)} />
             {activeCall && (
               <CallInfo
                 call={activeCall}

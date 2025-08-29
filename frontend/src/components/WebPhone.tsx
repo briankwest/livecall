@@ -31,7 +31,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { callsService } from '../services/api';
 import { Call } from '../types';
 
-export const WebPhone: React.FC = () => {
+interface WebPhoneProps {
+  onCallStart?: () => void;
+}
+
+export const WebPhone: React.FC<WebPhoneProps> = ({ onCallStart }) => {
   const { enqueueSnackbar } = useSnackbar();
   const { user } = useAuth();
   const [isInitializing, setIsInitializing] = useState(false);
@@ -234,6 +238,10 @@ export const WebPhone: React.FC = () => {
       console.log('WebPhone: Calling makeCall...');
       await signalWireService.makeCall(phoneNumber);
       console.log('WebPhone: makeCall completed successfully');
+      // Switch to Live Call tab when call starts
+      if (onCallStart) {
+        onCallStart();
+      }
     } catch (error) {
       console.error('WebPhone: makeCall failed:', error);
       enqueueSnackbar(`Failed to make call: ${error instanceof Error ? error.message : 'Unknown error'}`, { variant: 'error' });
@@ -243,20 +251,29 @@ export const WebPhone: React.FC = () => {
 
   const handleAnswerCall = async () => {
     try {
+      console.log('User clicked Answer button for incoming call');
       await signalWireService.answerCall();
+      // The call.started event will handle setting currentCall
+      // Just clear the incoming call dialog
       setIncomingCall(null);
-      setCurrentCall(incomingCall);
+      // Switch to Live Call tab when answering a call
+      if (onCallStart) {
+        onCallStart();
+      }
     } catch (error) {
-      enqueueSnackbar('Failed to answer call', { variant: 'error' });
+      console.error('Failed to answer call:', error);
+      enqueueSnackbar(`Failed to answer call: ${error instanceof Error ? error.message : 'Unknown error'}`, { variant: 'error' });
     }
   };
 
   const handleRejectCall = async () => {
     try {
+      console.log('User clicked Reject button for incoming call');
       await signalWireService.rejectCall();
       setIncomingCall(null);
     } catch (error) {
-      enqueueSnackbar('Failed to reject call', { variant: 'error' });
+      console.error('Failed to reject call:', error);
+      enqueueSnackbar(`Failed to reject call: ${error instanceof Error ? error.message : 'Unknown error'}`, { variant: 'error' });
     }
   };
 

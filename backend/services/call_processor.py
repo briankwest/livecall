@@ -26,13 +26,17 @@ class CallProcessor:
     ):
         """Process new transcription and search for relevant documents"""
         
+        logger.info(f"🔍 STARTING VECTOR SEARCH FLOW for call {call_id}, transcription {transcription_id}")
+        
         try:
             # Get recent transcriptions for context
             recent_transcriptions = await self._get_recent_transcriptions(
                 db, call_id, self.context_window_minutes
             )
             
-            logger.info(f"Processing transcription for call {call_id}: found {len(recent_transcriptions)} recent transcriptions")
+            logger.info(f"📝 Found {len(recent_transcriptions)} recent transcriptions for call {call_id}")
+            if recent_transcriptions:
+                logger.info(f"   Latest: {recent_transcriptions[-1].get('text', '')[:100]}...")
             
             # Only process if we have enough context
             if len(recent_transcriptions) < self.min_transcriptions_for_search:
@@ -40,21 +44,27 @@ class CallProcessor:
                 return
                 
             # Analyze conversation context
+            logger.info(f"🤖 Analyzing conversation with Bedrock Nova...")
             summary, topics = await self.bedrock_service.analyze_conversation_context(
                 recent_transcriptions
             )
             
+            logger.info(f"📊 Bedrock Analysis Results:")
+            logger.info(f"   Summary: {summary}")
+            logger.info(f"   Topics: {topics}")
+            
             if not summary and not topics:
-                logger.info(f"No meaningful context extracted for call {call_id}")
+                logger.warning(f"⚠️ No meaningful context extracted for call {call_id}")
                 return
                 
             # Generate search query
             search_query = await self.bedrock_service.generate_search_query(
                 summary, topics
             )
+            logger.info(f"🔎 Generated search query: '{search_query}'")
             
             # Search for relevant documents
-            logger.info(f"Searching for documents with query: '{search_query}'")
+            logger.info(f"🔍 Searching vector store...")
             documents = await self.vector_service.search_documents(
                 search_query,
                 db,
@@ -62,7 +72,10 @@ class CallProcessor:
                 similarity_threshold=0.3  # Lower threshold to be more inclusive
             )
             
-            logger.info(f"Found {len(documents)} relevant documents for call {call_id}")
+            logger.info(f"📚 Found {len(documents)} relevant documents for call {call_id}")
+            if documents:
+                for i, doc in enumerate(documents[:3], 1):
+                    logger.info(f"   {i}. {doc['title']} (similarity: {doc['similarity']:.2f})")
             
             if documents:
                 # Store AI interaction
@@ -90,8 +103,8 @@ class CallProcessor:
                 await db.commit()
                 
                 # Send suggestions via WebSocket
-                logger.info(f"Broadcasting AI suggestions for call {call_id} with {len(documents)} documents")
-                await websocket_manager.broadcast_to_call(
+                logger.info(f"📡 Broadcasting AI suggestions for call {call_id} with {len(documents)} documents")
+                broadcast_result = await websocket_manager.broadcast_to_call(
                     call_id,
                     {
                         "event": "ai:suggestion",
@@ -103,11 +116,12 @@ class CallProcessor:
                         }
                     }
                 )
+                logger.info(f"✅ Broadcast complete. Result: {broadcast_result}")
                 
-            logger.info(f"Processed transcription for call {call_id}, found {len(documents)} documents")
+            logger.info(f"✅ VECTOR SEARCH COMPLETE for call {call_id}, found {len(documents)} documents")
             
         except Exception as e:
-            logger.error(f"Error processing transcription: {e}")
+            logger.error(f"❌ ERROR in vector search flow: {e}", exc_info=True)
             await db.rollback()
             
     async def generate_call_summary(
